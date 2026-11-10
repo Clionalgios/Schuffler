@@ -15,15 +15,22 @@
  *    4. Injection forcée d'un caractère par classe active (positions 0 à 3).
  *    5. Permutation déterministe : final[i] = result[(i*7+13) % n].
  *    6. Sortie selon le mode : API (chaîne en clair sur la sortie standard),
- *       clipboard (copie via xclip puis affichage de « 0 »), ou les deux.
- *       Sans option de mode : clipboard par défaut.
+ *       clipboard (copie presse-papiers native selon la plateforme, puis
+ *       affichage de « 0 »), ou les deux. Sans option de mode : clipboard
+ *       par défaut.
  *
  *  COMPILATION
- *    cc -O2 -Wall -Wextra -o schuffler schuffler.c
+ *    Linux   : cc -O2 -Wall -Wextra -o schuffler main.c
+ *    Windows : cl /O2 /Fe:schuffler.exe main.c                        (MSVC)
+ *              x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -o schuffler.exe main.c
+ *                                                                      (MinGW)
  *
  *  DÉPENDANCES
- *    libc POSIX.1-2008 (sigaction, termios, popen) et xclip (presse-papiers,
- *    requis en mode clipboard uniquement).
+ *    Linux et autres POSIX : libc POSIX.1-2008 (sigaction, termios, popen) ;
+ *      presse-papiers (mode clipboard uniquement) : xclip — équivalence
+ *      avec le script bash — ou xsel, wl-copy, pbcopy en repli automatique.
+ *    Windows : API Win32 (presse-papiers, console) ; aucune dépendance
+ *      externe en mode clipboard.
  *
  *  ÉQUIVALENCE AVEC LE SCRIPT BASH
  *    Chaque section ci-dessous cite la fonction bash correspondante. Les
@@ -58,16 +65,29 @@
  *  1. EN-TÊTES ET OPTIONS DE COMPILATION
  * ========================================================================== */
 
-#define _POSIX_C_SOURCE 200809L
+/* Détection de la plateforme : _WIN32 couvre MSVC et MinGW, 32 et 64 bits.
+ * Le reste du fichier ne teste _WIN32 qu'aux points réellement système :
+ * presse-papiers (section 11), console et signaux (sections 4 et 8). */
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  if defined(_MSC_VER)
+#    define _CRT_SECURE_NO_WARNINGS
+#  endif
+#  include <windows.h>   /* presse-papiers et console Win32            */
+#  include <io.h>        /* _isatty, _fileno, _write                   */
+#else
+#  define _POSIX_C_SOURCE 200809L
+#  include <termios.h>   /* tcgetattr, tcsetattr (echo off, read -s)   */
+#  include <unistd.h>    /* isatty, write, STDOUT_FILENO               */
+#endif
 
 #include <errno.h>    /* errno, ERANGE (parse_length)                    */
-#include <signal.h>   /* sigaction (équivalent du trap INT)             */
+#include <signal.h>   /* sigaction/signal (équivalent du trap INT)       */
 #include <stdint.h>   /* uint32_t, uint64_t, uint8_t (SHA-256)          */
-#include <stdio.h>    /* stdio, popen (presse-papiers)                  */
+#include <stdio.h>    /* stdio ; popen (presse-papiers, POSIX uniquement) */
 #include <stdlib.h>   /* malloc, realloc, free, exit, atexit            */
 #include <string.h>   /* strlen, strcmp, strchr, memcpy, memmove, memset */
-#include <termios.h>  /* tcgetattr, tcsetattr (echo off, read -s)       */
-#include <unistd.h>   /* isatty, write, STDOUT_FILENO                   */
 
 /* ==========================================================================
  *  2. ÉTAT GLOBAL
@@ -239,8 +259,13 @@ static void secure_cleanup(void)
 static void handle_interrupt(int sig)
 {
     (void)sig;
+#if defined(_WIN32)
+    int rc = _write(_fileno(stdout), "\n", 1);
+    (void)rc;
+#else
     ssize_t rc = write(STDOUT_FILENO, "\n", 1);
     (void)rc;
+#endif
     exit(1); /* déclenche secure_cleanup, comme en bash */
 }
 
@@ -250,11 +275,16 @@ static void handle_interrupt(int sig)
  * -------------------------------------------------------------------------- */
 static void init_signals(void)
 {
+#if defined(_WIN32)
+    /* Windows : signal() du runtime C ; sigaction n'existe pas. */
+    signal(SIGINT, handle_interrupt);
+#else
     struct sigaction sa;
 
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = handle_interrupt;
     sigaction(SIGINT, &sa, NULL);
+#endif
 }
 
 /* ==========================================================================
@@ -661,6 +691,24 @@ static char *read_line_bash(void)
  * -------------------------------------------------------------------------- */
 static void read_secrets(void)
 {
+#if defined(_WIN32)
+    /* Windows : mode console (ENABLE_ECHO_INPUT) au lieu de termios. */
+    HANDLE hconsole = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD saved_mode = 0;
+    int is_tty = (hconsole != INVALID_HANDLE_VALUE && hconsole != NULL
+                  && GetConsoleMode(hconsole, &saved_mode));
+
+    if (is_tty) {
+        DWORD noecho = saved_mode & ~(DWORD)ENABLE_ECHO_INPUT;
+        SetConsoleMode(hconsole, noecho);
+    }
+
+    ws.secret = read_line_bash();
+
+    if (is_tty)
+        SetConsoleMode(hconsole, saved_mode);
+#else
+    /* POSIX : termios, suppression de l'écho. */
     int is_tty = isatty(STDIN_FILENO);
     struct termios saved;
 
@@ -675,6 +723,7 @@ static void read_secrets(void)
 
     if (is_tty)
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved);
+#endif
 
     putchar('\n'); /* écho du retour à la ligne, comme « read -s; echo » */
 
@@ -1007,24 +1056,107 @@ static void shuffle_result(void)
  *  Aiguillage selon les modes actifs, résolus par parse_arguments :
  *    - mode API seul  (-A)         : mot de passe en clair sur la sortie
  *                                   standard, rien d'autre ;
- *    - mode clipboard (-C, défaut) : copie via xclip puis affichage de « 0 »,
- *                                   comme le script bash d'origine ;
+ *    - mode clipboard (-C, défaut) : copie presse-papiers puis affichage
+ *                                   de « 0 », comme le script bash d'origine ;
  *    - modes combinés (-A -C)      : sortie standard PUIS presse-papiers ;
  *                                   la sortie standard contient donc le mot
  *                                   de passe puis « 0 ».
+ *
+ *  Le presse-papiers est natif à chaque système ; la copie intervient
+ *  après la génération et n'affecte en rien le caractère déterministe :
+ *    - Windows : API Win32 (OpenClipboard/SetClipboardData, CF_TEXT),
+ *      sans dépendance externe ;
+ *    - Linux et autres POSIX : outils en ligne de commande essayés dans
+ *      l'ordre — xclip (équivalence avec le script bash), xsel (X11),
+ *      wl-copy (Wayland), pbcopy (macOS) — le premier qui réussit l'emporte.
  * ========================================================================== */
 
+#if defined(_WIN32)
 /* --------------------------------------------------------------------------
- * copy_to_clipboard — copie via xclip puis affichage de « 0 »
+ * copy_to_clipboard_impl — copie native Win32 (CF_TEXT)
+ * L'alphabet de Schuffler est ASCII pur : CF_TEXT suffit, pas besoin
+ * de la conversion CF_UNICODETEXT. En cas de succès, le bloc GlobalAlloc
+ * appartient au système ; il n'est libéré qu'en cas d'échec.
+ * -------------------------------------------------------------------------- */
+static int copy_to_clipboard_impl(void)
+{
+    size_t size = strlen(ws.final) + 1;
+    HGLOBAL hmem = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)size);
+    int ok = 0;
+
+    if (hmem != NULL) {
+        char *data = (char *)GlobalLock(hmem);
+        if (data != NULL) {
+            memcpy(data, ws.final, size);
+            GlobalUnlock(hmem);
+
+            if (OpenClipboard(NULL)) {
+                EmptyClipboard();
+                ok = (SetClipboardData(CF_TEXT, hmem) != NULL);
+                CloseClipboard();
+            }
+        }
+    }
+
+    if (!ok && hmem != NULL)
+        GlobalFree(hmem); /* échec : le bloc n'a pas été remis au système */
+    return ok;
+}
+#else
+/* --------------------------------------------------------------------------
+ * clipboard_write_pipe — écrit la chaîne finale dans la commande indiquée
+ * Retour : 1 si la commande a réussi (code de sortie nul), 0 sinon.
+ * -------------------------------------------------------------------------- */
+static int clipboard_write_pipe(const char *command)
+{
+    FILE *pp = popen(command, "w");
+
+    if (pp == NULL)
+        return 0;
+    fputs(ws.final, pp);
+    return pclose(pp) == 0;
+}
+
+/* --------------------------------------------------------------------------
+ * copy_to_clipboard_impl — essai ordonné des outils presse-papiers POSIX
+ * xclip en premier conserve l'équivalence avec le script bash ; xsel,
+ * wl-copy et pbcopy servent de repli selon le système et la session
+ * graphique. Un outil absent (popen sur /bin/sh : code 127) ou sans
+ * serveur accessible échoue silencieusement et laisse place au suivant.
+ * -------------------------------------------------------------------------- */
+static int copy_to_clipboard_impl(void)
+{
+    static const char *const tools[] = {
+        "xclip -selection clipboard",
+        "xsel --clipboard --input",
+        "wl-copy",
+        "pbcopy",
+        NULL
+    };
+
+    for (size_t i = 0; tools[i] != NULL; i++) {
+        if (clipboard_write_pipe(tools[i]))
+            return 1;
+    }
+    return 0;
+}
+#endif
+
+/* --------------------------------------------------------------------------
+ * copy_to_clipboard — copie selon la plateforme puis affichage de « 0 »
  * Équivalent bash : echo -n "$final" | xclip -selection clipboard ; echo "0"
+ * Divergence volontaire : un échec de copie est signalé sur la sortie
+ * d'erreur (jamais sur la sortie standard, réservée au « 0 »).
  * -------------------------------------------------------------------------- */
 static void copy_to_clipboard(void)
 {
-    FILE *pp = popen("xclip -selection clipboard", "w");
-
-    if (pp != NULL) {
-        fputs(ws.final, pp);
-        pclose(pp);
+    if (!copy_to_clipboard_impl()) {
+#if defined(_WIN32)
+        fputs("Echec de la copie dans le presse-papiers Win32\n", stderr);
+#else
+        fputs("Presse-papiers indisponible : "
+              "xclip, xsel, wl-copy ou pbcopy requis\n", stderr);
+#endif
     }
     puts("0");
 }
