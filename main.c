@@ -31,10 +31,13 @@
  *    --length (bash : -l 010 vaut 8), quirk de « -- » (le reste est ignoré),
  *    sémantique de « read » sans -r (antislashs, rognage IFS), arrêt fatal
  *    sur alphabet de classe vide (bash : division par zéro).
- *    Divergence volontaire unique : un secret saisi vide provoque un message
- *    d'erreur explicite puis l'aide, tous deux sur la sortie d'erreur (le
- *    script bash affiche « 1 » sur la sortie standard). La sortie standard
- *    reste ainsi réservée à la chaîne transformée en mode API.
+ *    Divergences volontaires de flux : tous les messages d'erreur sont
+ *    écrits sur la sortie d'erreur — option inconnue, longueur invalide,
+ *    listes manquantes, catégories toutes exclues, alphabet final vide,
+ *    secret saisi vide (ce dernier cas déclenche en outre l'aide, elle aussi
+ *    sur la sortie d'erreur ; le script bash affiche « 1 » sur la sortie
+ *    standard). La sortie standard reste ainsi réservée à la chaîne
+ *    transformée en mode API et au « 0 » du mode clipboard.
  *
  *  SOMMAIRE
  *     1. En-têtes et options de compilation
@@ -347,6 +350,10 @@ static void show_help(FILE *stream)
  *    - -C / --clipboard : mode clipboard seul (presse-papiers) ;
  *    - aucun des deux   : clipboard par défaut ;
  *    - les deux         : sortie standard ET presse-papiers.
+ *
+ *  Divergence de flux : les messages d'erreur de l'analyse sont écrits sur
+ *  la sortie d'erreur (le script bash les affiche sur la sortie standard),
+ *  afin de réserver celle-ci à la chaîne transformée.
  * ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -415,7 +422,7 @@ static void parse_arguments(int argc, char **argv)
         else if (strcmp(arg, "-l") == 0 || strcmp(arg, "--length") == 0) {
             const char *val = (i + 1 < argc) ? argv[i + 1] : "";
             if (!parse_length(val, &cfg.output_length)) {
-                puts("Longueur invalide");
+                fputs("Longueur invalide\n", stderr);
                 exit(1);
             }
             i++;
@@ -435,7 +442,7 @@ static void parse_arguments(int argc, char **argv)
         else if (strcmp(arg, "--exclude-chars") == 0) {
             const char *val = (i + 1 < argc) ? argv[i + 1] : "";
             if (*val == '\0') {
-                puts("Liste de caractères à exclure manquante");
+                fputs("Liste de caractères à exclure manquante\n", stderr);
                 exit(1);
             }
             free(cfg.excluded_chars);
@@ -445,7 +452,7 @@ static void parse_arguments(int argc, char **argv)
         else if (strcmp(arg, "--special-set") == 0) {
             const char *val = (i + 1 < argc) ? argv[i + 1] : "";
             if (*val == '\0') {
-                puts("Jeu de caractères spéciaux manquant");
+                fputs("Jeu de caractères spéciaux manquant\n", stderr);
                 exit(1);
             }
             free(cfg.custom_special_set);
@@ -459,7 +466,7 @@ static void parse_arguments(int argc, char **argv)
             break;
         }
         else if (arg[0] == '-') {
-            printf("Option inconnue: %s\n", arg);
+            fprintf(stderr, "Option inconnue: %s\n", arg);
             exit(1);
         }
         else {
@@ -475,7 +482,7 @@ static void parse_arguments(int argc, char **argv)
         cfg.mode_clipboard = 1;
 
     if (!cfg.use_lower && !cfg.use_upper && !cfg.use_digits && !cfg.use_special) {
-        puts("Toutes les catégories ont été exclues");
+        fputs("Toutes les catégories ont été exclues\n", stderr);
         exit(1);
     }
 }
@@ -573,7 +580,7 @@ static void build_charset(void)
     }
 
     if (*cfg.all_chars == '\0') {
-        puts("Alphabet final vide après exclusions");
+        fputs("Alphabet final vide après exclusions\n", stderr);
         exit(1);
     }
 }
