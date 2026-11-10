@@ -17,7 +17,9 @@
  *    6. Sortie selon le mode : API (chaîne en clair sur la sortie standard),
  *       clipboard (copie presse-papiers native selon la plateforme, puis
  *       affichage de « 0 »), ou les deux. Sans option de mode : clipboard
- *       par défaut.
+ *       par défaut. L'option -a/--artefact remplace l'affichage en clair
+ *       par l'artefact (premier et dernier caractère) ; le presse-papiers
+ *       reçoit toujours la chaîne complète.
  *
  *  COMPILATION
  *    Linux   : cc -O2 -Wall -Wextra -o schuffler main.c
@@ -111,6 +113,7 @@ typedef struct {
     int use_special;                   /* USE_SPECIAL — classe spéciaux active */
     int mode_api;                      /* MODE_API      — option -A : sortie standard */
     int mode_clipboard;                /* MODE_CLIPBOARD — option -C : presse-papiers  */
+    int show_artefact;                 /* ARTEFACT      — option -a : artefact au lieu du clair */
     char *lower;                       /* LOWER         — minuscules (filtré) */
     char *upper;                       /* UPPER         — majuscules (filtré) */
     char *digits;                       /* DIGITS        — chiffres (filtré)   */
@@ -135,7 +138,7 @@ typedef struct {
 static Config cfg = {
     20,               /* OUTPUT_LENGTH */
     1, 1, 1, 1,       /* USE_LOWER, USE_UPPER, USE_DIGITS, USE_SPECIAL */
-    0, 0,             /* MODE_API, MODE_CLIPBOARD (résolu à l'analyse) */
+    0, 0, 0,          /* MODE_API, MODE_CLIPBOARD, ARTEFACT (résolu à l'analyse) */
     NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
@@ -345,7 +348,10 @@ static void show_help(FILE *stream)
           "        Afficher cette aide et quitter\n"
           "\n"
           "  -a, --artefact\n"
-          "        Affiche l'artefact de la chaîne transformée (premier et dernier caractère)\n"
+          "        Affiche l'artefact de la chaîne transformée (premier et dernier\n"
+          "        caractère) à la place de la sortie normale, au format étiqueté :\n"
+          "        premier: X, dernier: Y. Le presse-papiers reçoit toujours la\n"
+          "        chaîne complète.\n"
           "\n"
           "Entrée:\n"
           "  secret\n"
@@ -359,7 +365,8 @@ static void show_help(FILE *stream)
           "  schuffler.sh --special-set '@#%' --exclude-chars '#'\n"
           "  schuffler.sh -A monsecret\n"
           "  schuffler.sh -C monsecret\n"
-          "  schuffler.sh -A -C monsecret\n",
+          "  schuffler.sh -A -C monsecret\n"
+          "  schuffler.sh -a monsecret\n",
           stream);
 }
 
@@ -380,6 +387,10 @@ static void show_help(FILE *stream)
  *    - -C / --clipboard : mode clipboard seul (presse-papiers) ;
  *    - aucun des deux   : clipboard par défaut ;
  *    - les deux         : sortie standard ET presse-papiers.
+ *
+ *  Option d'affichage : -a / --artefact remplace l'affichage en clair par
+ *  l'artefact (premier et dernier caractère) ; le presse-papiers reçoit
+ *  toujours la chaîne complète (voir section 11).
  *
  *  Divergence de flux : les messages d'erreur de l'analyse sont écrits sur
  *  la sortie d'erreur (le script bash les affiche sur la sortie standard),
@@ -448,6 +459,9 @@ static void parse_arguments(int argc, char **argv)
         }
         else if (strcmp(arg, "-C") == 0 || strcmp(arg, "--clipboard") == 0) {
             cfg.mode_clipboard = 1;
+        }
+        else if (strcmp(arg, "-a") == 0 || strcmp(arg, "--artefact") == 0) {
+            cfg.show_artefact = 1;
         }
         else if (strcmp(arg, "-l") == 0 || strcmp(arg, "--length") == 0) {
             const char *val = (i + 1 < argc) ? argv[i + 1] : "";
@@ -1062,6 +1076,11 @@ static void shuffle_result(void)
  *                                   la sortie standard contient donc le mot
  *                                   de passe puis « 0 ».
  *
+ *  Option -a/--artefact : l'artefact de la chaîne (premier et dernier
+ *  caractère, format étiqueté « premier: X, dernier: Y ») remplace
+ *  l'affichage en clair — mot de passe en mode API, « 0 » en mode
+ *  clipboard. Le presse-papiers reçoit toujours la chaîne complète.
+ *
  *  Le presse-papiers est natif à chaque système ; la copie intervient
  *  après la génération et n'affecte en rien le caractère déterministe :
  *    - Windows : API Win32 (OpenClipboard/SetClipboardData, CF_TEXT),
@@ -1143,10 +1162,29 @@ static int copy_to_clipboard_impl(void)
 #endif
 
 /* --------------------------------------------------------------------------
+ * show_artefact — artefact de la chaîne transformée (option -a)
+ * Premier et dernier caractère de ws.final, au format étiqueté :
+ *   premier: b, dernier: 6
+ * Remplace l'affichage en clair (mot de passe en mode API, « 0 » en mode
+ * clipboard) ; le presse-papiers, lui, reçoit toujours la chaîne complète.
+ * La longueur minimale étant 4, premier et dernier sont toujours distincts.
+ * -------------------------------------------------------------------------- */
+static void show_artefact(void)
+{
+    size_t n = strlen(ws.final);
+
+    if (n == 0)
+        return;
+    printf("premier: %c, dernier: %c\n", ws.final[0], ws.final[n - 1]);
+}
+
+/* --------------------------------------------------------------------------
  * copy_to_clipboard — copie selon la plateforme puis affichage de « 0 »
  * Équivalent bash : echo -n "$final" | xclip -selection clipboard ; echo "0"
  * Divergence volontaire : un échec de copie est signalé sur la sortie
  * d'erreur (jamais sur la sortie standard, réservée au « 0 »).
+ * Avec -a, l'artefact remplace le « 0 » ; le presse-papiers reçoit
+ * toujours la chaîne complète.
  * -------------------------------------------------------------------------- */
 static void copy_to_clipboard(void)
 {
@@ -1158,7 +1196,10 @@ static void copy_to_clipboard(void)
               "xclip, xsel, wl-copy ou pbcopy requis\n", stderr);
 #endif
     }
-    puts("0");
+    if (cfg.show_artefact)
+        show_artefact();
+    else
+        puts("0");
 }
 
 /* --------------------------------------------------------------------------
@@ -1166,8 +1207,12 @@ static void copy_to_clipboard(void)
  * -------------------------------------------------------------------------- */
 static void output_result(void)
 {
-    if (cfg.mode_api)
-        puts(ws.final);
+    if (cfg.mode_api) {
+        if (cfg.show_artefact)
+            show_artefact();
+        else
+            puts(ws.final);
+    }
     if (cfg.mode_clipboard)
         copy_to_clipboard();
 }
