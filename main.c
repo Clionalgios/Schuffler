@@ -17,9 +17,10 @@
  *    6. Sortie selon le mode : API (chaîne en clair sur la sortie standard),
  *       clipboard (copie presse-papiers native selon la plateforme, puis
  *       affichage de « 0 »), ou les deux. Sans option de mode : clipboard
- *       par défaut. L'option -a/--artefact remplace l'affichage en clair
- *       par l'artefact (premier et dernier caractère) ; le presse-papiers
- *       reçoit toujours la chaîne complète.
+ *       par défaut. L'option -a/--artefact affiche l'artefact (premier et
+ *       dernier caractère) : en complément de la chaîne en clair en mode
+ *       API — toujours renvoyée —, à la place du « 0 » en mode clipboard
+ *       seul ; le presse-papiers reçoit toujours la chaîne complète.
  *
  *  COMPILATION
  *    Linux   : cc -O2 -Wall -Wextra -o schuffler main.c
@@ -113,7 +114,7 @@ typedef struct {
     int use_special;                   /* USE_SPECIAL — classe spéciaux active */
     int mode_api;                      /* MODE_API      — option -A : sortie standard */
     int mode_clipboard;                /* MODE_CLIPBOARD — option -C : presse-papiers  */
-    int show_artefact;                 /* ARTEFACT      — option -a : artefact au lieu du clair */
+    int show_artefact;                 /* ARTEFACT      — option -a : artefact en complément du clair */
     char *lower;                       /* LOWER         — minuscules (filtré) */
     char *upper;                       /* UPPER         — majuscules (filtré) */
     char *digits;                       /* DIGITS        — chiffres (filtré)   */
@@ -349,9 +350,10 @@ static void show_help(FILE *stream)
           "\n"
           "  -a, --artefact\n"
           "        Affiche l'artefact de la chaîne transformée (premier et dernier\n"
-          "        caractère) à la place de la sortie normale, au format étiqueté :\n"
-          "        premier: X, dernier: Y. Le presse-papiers reçoit toujours la\n"
-          "        chaîne complète.\n"
+          "        caractère, concaténés). En mode API, la chaîne transformée est\n"
+          "        toujours affichée en clair et l'artefact est ajouté à sa suite.\n"
+          "        En mode clipboard, l'artefact remplace le « 0 » affiché en sortie\n"
+          "        standard. Le presse-papiers reçoit toujours la chaîne complète.\n"
           "\n"
           "Entrée:\n"
           "  secret\n"
@@ -388,9 +390,10 @@ static void show_help(FILE *stream)
  *    - aucun des deux   : clipboard par défaut ;
  *    - les deux         : sortie standard ET presse-papiers.
  *
- *  Option d'affichage : -a / --artefact remplace l'affichage en clair par
- *  l'artefact (premier et dernier caractère) ; le presse-papiers reçoit
- *  toujours la chaîne complète (voir section 11).
+ *  Option d'affichage : -a / --artefact affiche l'artefact (premier et
+ *  dernier caractère) en complément de la chaîne en clair en mode API,
+ *  et à la place du « 0 » en mode clipboard seul ; le presse-papiers
+ *  reçoit toujours la chaîne complète (voir section 11).
  *
  *  Divergence de flux : les messages d'erreur de l'analyse sont écrits sur
  *  la sortie d'erreur (le script bash les affiche sur la sortie standard),
@@ -1069,17 +1072,19 @@ static void shuffle_result(void)
  * --------------------------------------------------------------------------
  *  Aiguillage selon les modes actifs, résolus par parse_arguments :
  *    - mode API seul  (-A)         : mot de passe en clair sur la sortie
- *                                   standard, rien d'autre ;
+ *                                   standard, puis l'artefact si -a ;
  *    - mode clipboard (-C, défaut) : copie presse-papiers puis affichage
  *                                   de « 0 », comme le script bash d'origine ;
  *    - modes combinés (-A -C)      : sortie standard PUIS presse-papiers ;
- *                                   la sortie standard contient donc le mot
- *                                   de passe puis « 0 ».
+ *                                   la sortie standard porte le mot de passe
+ *                                   (puis l'artefact si -a), sans le « 0 »
+ *                                   du mode clipboard seul.
  *
  *  Option -a/--artefact : l'artefact de la chaîne (premier et dernier
- *  caractère, format étiqueté « premier: X, dernier: Y ») remplace
- *  l'affichage en clair — mot de passe en mode API, « 0 » en mode
- *  clipboard. Le presse-papiers reçoit toujours la chaîne complète.
+ *  caractère, concaténés) est affiché à la suite du mot de passe en
+ *  mode API — la chaîne transformée est toujours renvoyée en clair sur
+ *  la sortie standard — et remplace le « 0 » en mode clipboard seul.
+ *  Le presse-papiers reçoit toujours la chaîne complète.
  *
  *  Le presse-papiers est natif à chaque système ; la copie intervient
  *  après la génération et n'affecte en rien le caractère déterministe :
@@ -1163,18 +1168,11 @@ static int copy_to_clipboard_impl(void)
 
 /* --------------------------------------------------------------------------
  * show_artefact — artefact de la chaîne transformée (option -a)
- * Premier et dernier caractère de ws.final, au format étiqueté :
- *   premier: b, dernier: 6
- * Remplace l'affichage en clair (mot de passe en mode API, « 0 » en mode
- * clipboard) ; le presse-papiers, lui, reçoit toujours la chaîne complète.
- * La longueur minimale étant 4, premier et dernier sont toujours distincts.
- * -------------------------------------------------------------------------- */
-/* --------------------------------------------------------------------------
- * show_artefact — artefact de la chaîne transformée (option -a)
  * Premier et dernier caractère de ws.final, concaténés sans étiquette :
  *   b6
- * Remplace l'affichage en clair (mot de passe en mode API, « 0 » en mode
- * clipboard) ; le presse-papiers, lui, reçoit toujours la chaîne complète.
+ * Affiché à la suite de la chaîne en clair en mode API, à la place du
+ * « 0 » en mode clipboard seul ; le presse-papiers, lui, reçoit toujours
+ * la chaîne complète.
  * La longueur minimale étant 4, premier et dernier sont toujours distincts.
  * -------------------------------------------------------------------------- */
 static void show_artefact(void)
@@ -1191,8 +1189,8 @@ static void show_artefact(void)
  * Équivalent bash : echo -n "$final" | xclip -selection clipboard ; echo "0"
  * Divergence volontaire : un échec de copie est signalé sur la sortie
  * d'erreur (jamais sur la sortie standard, réservée au « 0 »).
- * Avec -a, l'artefact remplace le « 0 » ; le presse-papiers reçoit
- * toujours la chaîne complète.
+ * Avec -a et sans -A, l'artefact remplace le « 0 » ; le presse-papiers
+ * reçoit toujours la chaîne complète.
  * -------------------------------------------------------------------------- */
 static void copy_to_clipboard(void)
 {
@@ -1206,8 +1204,8 @@ static void copy_to_clipboard(void)
     }
 
     /* Mode hybride (-A -C) : le mode API étant actif, la sortie standard
-     * porte déjà la chaîne transformée (ou l'artefact) ; le « 0 » du
-     * mode clipboard n'y est pas ajouté. */
+     * porte déjà la chaîne transformée (puis l'artefact avec -a) ; le
+     * « 0 » du mode clipboard n'y est pas ajouté. */
     if (!cfg.mode_api) {
         if (cfg.show_artefact)
             show_artefact();
@@ -1222,10 +1220,12 @@ static void copy_to_clipboard(void)
 static void output_result(void)
 {
     if (cfg.mode_api) {
+        /* Le mode API renvoie toujours la chaîne transformée en clair ;
+         * l'artefact (-a), s'il est demandé, vient en complément sur la
+         * ligne suivante, jamais en remplacement. */
+        puts(ws.final);
         if (cfg.show_artefact)
             show_artefact();
-        else
-            puts(ws.final);
     }
     if (cfg.mode_clipboard)
         copy_to_clipboard();
