@@ -38,10 +38,14 @@ Déterminisme :
     de toute valeur attendue.
 
 Presse-papiers :
-    La lecture du presse-papiers nécessite l'un des outils suivants :
-    xclip, xsel, wl-paste (Wayland) ou pbpaste (macOS). En son absence, la
-    vérification du presse-papiers est marquée INDÉTERMINÉE (jamais en
-    échec).
+    Windows : lecture et vidage natifs via l'API Win32 (ctypes :
+    OpenClipboard/GetClipboardData, EmptyClipboard) — aucun outil
+    externe requis, miroir exact de la copie réalisée par le portage C
+    (CF_TEXT suffit : l'alphabet de Schuffler est ASCII pur).
+    Linux et autres POSIX : la lecture nécessite l'un des outils
+    suivants : xclip, xsel, wl-paste (Wayland) ou pbpaste (macOS). En
+    son absence, la vérification du presse-papiers est marquée
+    INDÉTERMINÉE (jamais en échec).
 
 Journal en direct et lisibilité :
     - chaque catégorie est annoncée par son en-tête et son comportement
@@ -63,6 +67,11 @@ Exécution résiliente :
       processus complet qui est supprimé — programme et sous-processus
       éventuels (xclip lancé par popen) — afin qu'aucun processus orphelin
       ne survive et ne bloque de tube ;
+    - sous Windows, l'équivalent est assuré par un groupe de processus
+      dédié (CREATE_NEW_PROCESS_GROUP) et par la terminaison de l'arbre
+      complet via taskkill /F /T ; la copie Win32 ne laissant aucun
+      démon en arrière-plan, les sorties du programme sont simplement
+      récoltées jusqu'à fin de flux ;
     - les outils de presse-papiers qui se détachent en arrière-plan (xclip
       laisse un démon servir la sélection) ne bloquent rien : le vidage
       s'exécute sans tube capturé, les sorties du programme sont récoltées
@@ -74,7 +83,11 @@ Exécution résiliente :
     - une interruption (Ctrl+C) interrompt proprement l'exécution en cours,
       journalise le rapport partiel et retourne le code 130 ;
     - si le programme testé est un exécutable Windows (PE, en-tête « MZ »)
-      lancé depuis WSL via l'interopérabilité, une [ALERTE] est émise.
+      lancé depuis WSL via l'interopérabilité, une [ALERTE] est émise ;
+      symétriquement, un exécutable Linux (ELF) lancé depuis Windows —
+      l'erreur Win32 193 « %1 n'est pas une application Win32 valide »
+      en résulte — est également signalé, avec la compilation native
+      à effectuer.
 
 Utilisation :
     python3 schuffler_tests.py --prog ./schuffler
@@ -83,11 +96,13 @@ Utilisation :
     python3 schuffler_tests.py --prog ./schuffler --attendus attendus.json
     python3 schuffler_tests.py --prog ./schuffler --identifiant api-test
     python3 schuffler_tests.py --prog ./schuffler --couleur toujours
+    python schuffler_tests.py --prog ./Schuffler.exe         (Windows)
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import dataclasses
 import json
 import os
@@ -112,7 +127,15 @@ TIMEOUT_RECOLTE = 2       # secondes de grâce pour récolter les sorties
 TRONQUE_LIGNE = 60        # troncature des valeurs dans le journal
 TRONQUE_ECART = 120       # troncature des valeurs dans les écarts
 
-# Outils de lecture du presse-papiers, par ordre de préférence.
+# Plateforme d'exécution du cadre : les points réellement système (groupe
+# de processus, récolte des tubes, presse-papiers) s'aiguillent ici.
+EST_WINDOWS = os.name == "nt"
+
+# Format de presse-papiers texte ANSI (équivalent du CF_TEXT de main.c ;
+# l'alphabet de Schuffler est ASCII pur, la conversion Unicode est inutile).
+CF_TEXT = 1
+
+# Outils de lecture du presse-papiers POSIX, par ordre de préférence.
 OUTILS_LECTURE_PP = [
     ["xclip", "-o", "-selection", "clipboard"],
     ["xsel", "-ob"],
@@ -303,6 +326,80 @@ def est_wsl():
         return False
 
 
+def est_binaire_linux(chemin):
+    """Vrai si « chemin » est un exécutable au format ELF (tête « \x7fELF »)."""
+    try:
+        with open(chemin, "rb") as fichier:
+            return fichier.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Presse-papiers natif Windows (API Win32 via ctypes)
+# ---------------------------------------------------------------------------
+
+def _pp_win32():
+    """Bibliothèques Win32 avec les signatures nécessaires aux poignées.
+
+    Les types de retour sont explicités : en 64 bits, une poignée
+    (HGLOBAL, pointeur) laissée au c_int par défaut de ctypes serait
+    tronquée et fausserait la lecture du presse-papiers.
+    """
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalSize.restype = ctypes.c_size_t
+    kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+    user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    return user32, kernel32
+
+
+def lire_presse_papiers_win32():
+    """Lit le presse-papiers via OpenClipboard/GetClipboardData (CF_TEXT).
+
+    Miroir exact de la copie réalisée par le portage C en mode clipboard
+    (main.c : SetClipboardData, CF_TEXT) : aucune dépendance externe, aucun
+    processus détaché ne survit à la lecture. Le presse-papiers vide ou
+    fermé à d'autres formats renvoie une chaîne vide ; None n'est renvoyé
+    que si le presse-papiers lui-même est inaccessible (séance sans
+    bureau, service). Les sauts de ligne finaux sont retirés, comme pour
+    les outils POSIX.
+    """
+    user32, kernel32 = _pp_win32()
+    if not user32.OpenClipboard(None):
+        return None
+    try:
+        poignee = user32.GetClipboardData(CF_TEXT)
+        if not poignee:
+            return ""
+        pointeur = kernel32.GlobalLock(poignee)
+        if not pointeur:
+            return ""
+        try:
+            brut = ctypes.string_at(pointeur, kernel32.GlobalSize(poignee))
+        finally:
+            kernel32.GlobalUnlock(poignee)
+        return brut.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+    finally:
+        user32.CloseClipboard()
+
+
+def vider_presse_papiers_win32():
+    """Vide le presse-papiers via EmptyClipboard (mêmes garanties que la
+    lecture : aucun processus détaché, aucune sortie à neutraliser)."""
+    user32, _ = _pp_win32()
+    if not user32.OpenClipboard(None):
+        return
+    try:
+        user32.EmptyClipboard()
+    finally:
+        user32.CloseClipboard()
+
+
 # ---------------------------------------------------------------------------
 # Définition des scénarios (protocole schema_tests.md)
 # ---------------------------------------------------------------------------
@@ -476,13 +573,32 @@ SCENARIOS = [
 def tuer_groupe(processus, pgid=None):
     """Termine le groupe de processus complet (programme et sous-processus).
 
-    L'exécution s'inscrivant dans sa propre session, le programme et tous
-    ses descendants (xclip lancé par popen, shells intermédiaires) forment
-    un seul groupe : un unique killpg suffit. Le pgid doit être fourni
-    lorsque le processus principal a déjà été récolté, car un descendant
-    détaché (xclip servant la sélection) peut alors survivre seul, et
-    os.getpgid ne fonctionne plus sur un identifiant disparu.
+    POSIX : l'exécution s'inscrivant dans sa propre session, le programme
+    et tous ses descendants (xclip lancé par popen, shells intermédiaires)
+    forment un seul groupe : un unique killpg suffit. Le pgid doit être
+    fourni lorsque le processus principal a déjà été récolté, car un
+    descendant détaché (xclip servant la sélection) peut alors survivre
+    seul, et os.getpgid ne fonctionne plus sur un identifiant disparu.
+
+    Windows : l'arbre complet est terminé par taskkill /F /T sur
+    l'identifiant du programme (équivalent fonctionnel du killpg :
+    programme et sous-processus éventuels) ; taskkill sur un processus
+    déjà disparu échoue silencieusement. Le pgid n'existe pas sous
+    Windows et est ignoré.
     """
+    if EST_WINDOWS:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(processus.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=TIMEOUT_EXTINCTION)
+        except (subprocess.SubprocessError, OSError):
+            pass
+        try:
+            processus.kill()
+        except OSError:
+            pass
+        return
     cible = pgid
     if cible is None:
         try:
@@ -509,11 +625,20 @@ class CadreDeTest:
         # Les attendus externes (fichier JSON) priment sur les attendus
         # intégrés : c'est ce qui garantit la comparaison entre versions.
         self.attendus = attendus or {}
-        self.outil_pp = self._detecter_outil_pp()
+        # Presse-papiers : sous Windows, l'API Win32 native (ctypes) sert
+        # la lecture et le vidage, sans outil externe ; sous POSIX, les
+        # outils en ligne de commande sont détectés comme auparavant.
+        self.pp_win32 = EST_WINDOWS
+        self.outil_pp = None if EST_WINDOWS else self._detecter_outil_pp()
         # Processus éventuellement en cours, pour l'extinction propre
         # lors d'une interruption (Ctrl+C).
         self.processus_actif = None
         self.pgid_actif = None
+
+    def pp_disponible(self):
+        """Vrai si le presse-papiers peut être lu et vidé : nativement
+        sous Windows, par outil détecté sous POSIX."""
+        return self.pp_win32 or self.outil_pp is not None
 
     # -- Détection du presse-papiers --------------------------------------
 
@@ -525,6 +650,11 @@ class CadreDeTest:
         return None
 
     def lire_presse_papiers(self):
+        if self.pp_win32:
+            try:
+                return lire_presse_papiers_win32()
+            except OSError:
+                return None
         if self.outil_pp is None:
             return None
         lecture, _ = self.outil_pp
@@ -540,12 +670,21 @@ class CadreDeTest:
     def vider_presse_papiers(self):
         """Vide le presse-papiers.
 
+        Sous Windows, EmptyClipboard ne laisse aucune sortie à
+        neutraliser : l'appel natif suffit.
+
         Les sorties ne sont pas capturées : un outil qui se détache en
         arrière-plan (xclip laisse un démon servir la sélection) en
         retenant les tubes rendrait l'appel bloquant. Dirigées vers
         /dev/null, elles ne retiennent rien et l'appel rend la main dès la
         sortie du processus parent ; le démon, lui, poursuit son office.
         """
+        if self.pp_win32:
+            try:
+                vider_presse_papiers_win32()
+            except OSError:
+                pass
+            return
         if self.outil_pp is None:
             return
         _, vidage = self.outil_pp
@@ -569,7 +708,30 @@ class CadreDeTest:
         fini — sont retenues ; le descendant ne peut quant à lui rien écrire
         d'utile sur ces tubes. Tous les flux sont récoltés ensemble, afin
         que la grâce ne soit décomptée qu'une fois.
+
+        Windows : le portage C copie par l'API Win32 native, sans
+        sous-processus ; rien ne survit au programme et ne retient les
+        tubes. La lecture bloquante jusqu'à fin de flux suffit — select
+        ne connaît pas les tubes sous Windows — et rend immédiatement,
+        le programme étant terminé et les données déjà émises.
         """
+        if EST_WINDOWS:
+            resultats = []
+            for flux in fluxs:
+                donnees = b""
+                if flux is not None:
+                    try:
+                        donnees = flux.read()
+                    except (OSError, ValueError):
+                        donnees = b""
+                    try:
+                        flux.close()
+                    except OSError:
+                        pass
+                resultats.append(
+                    donnees.decode("utf-8", errors="replace"))
+            return resultats
+
         canaux = {}
         for flux in fluxs:
             if flux is None:
@@ -631,13 +793,24 @@ class CadreDeTest:
         if avec_pp:
             self.vider_presse_papiers()
 
+        # L'exécution s'inscrit dans son propre groupe : nouvelle session
+        # POSIX, groupe de processus dédié sous Windows (l'équivalent de
+        # la session pour l'isolation des interruptions ; l'arbre est
+        # ensuite terminé par taskkill /T, voir tuer_groupe).
+        options_creation = {}
+        if EST_WINDOWS:
+            options_creation["creationflags"] = \
+                subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            options_creation["start_new_session"] = True
+
         try:
             processus = subprocess.Popen(
                 commande,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
+                **options_creation,
             )
         except FileNotFoundError:
             return {
@@ -645,14 +818,28 @@ class CadreDeTest:
                 "stdout": None,
                 "stderr": "Programme introuvable : " + self.programme,
             }
+        except OSError as exc:
+            # Exemple typique : binaire compilé pour un autre système
+            # (ELF sous Windows : erreur Win32 193, « %1 n'est pas une
+            # application Win32 valide »). Signalé comme échec du
+            # scénario, avec la cause exacte, plutôt qu'en exception du
+            # cadre.
+            return {
+                "code_retour": None,
+                "stdout": None,
+                "stderr": f"Programme non lançable : {exc}",
+            }
 
         # Le pgid est mémorisé tant que le processus vit : une fois le
         # programme récolté, un descendant détaché peut survivre seul
         # dans le groupe, et os.getpgid ne fonctionne plus alors.
-        try:
-            pgid = os.getpgid(processus.pid)
-        except (ProcessLookupError, OSError):
-            pgid = None
+        # Windows n'a pas de pgid : tuer_groupe y fonce sur l'arbre.
+        pgid = None
+        if not EST_WINDOWS:
+            try:
+                pgid = os.getpgid(processus.pid)
+            except (ProcessLookupError, OSError):
+                pgid = None
 
         self.processus_actif = processus
         self.pgid_actif = pgid
@@ -717,11 +904,12 @@ class CadreDeTest:
         attendus = self.attendus.get(
             scenario.identifiant, scenario.attendus)
 
-        # Le presse-papiers est capturé chaque fois qu'un outil de lecture est
-        # disponible : il est systématiquement vidé avant l'exécution, de
+        # Le presse-papiers est capturé chaque fois qu'il est accessible —
+        # nativement sous Windows, par outil détecté sous POSIX : il est
+        # systématiquement vidé avant l'exécution, de
         # manière à ce qu'une valeur résiduelle ne soit jamais interprétée
         # comme une sortie du programme.
-        avec_pp = self.outil_pp is not None
+        avec_pp = self.pp_disponible()
 
         mesures = []
         for _ in range(scenario.executions):
@@ -762,7 +950,7 @@ class CadreDeTest:
             attendu = attendus.get(cle)
             statut = self.evaluer(
                 cle, attendu, derniere.get(cle),
-                pp_disponible=self.outil_pp is not None)
+                pp_disponible=self.pp_disponible())
             verdicts[cle] = statut
             details.append((cle, attendu, derniere.get(cle), statut))
 
@@ -843,8 +1031,11 @@ def formater_duree(duree):
 
 
 def afficher_entete(programme, pp_disponible, balise, total):
-    etat_pp = ("disponible" if pp_disponible
-               else "NON disponible (vérifications clipboard indéterminées)")
+    if pp_disponible:
+        etat_pp = ("disponible (API Win32)" if EST_WINDOWS
+                   else "disponible")
+    else:
+        etat_pp = "NON disponible (vérifications clipboard indéterminées)"
     print(ligne_balisee(balise, "CADRE",
                         f"Programme testé : {programme}"))
     print(ligne_balisee(balise, "CADRE",
@@ -1047,6 +1238,21 @@ def main(argv=None):
             "programme, ou exécutez ce cadre depuis un interpréteur Python "
             "Windows."), flush=True)
 
+    # Avertissement symétrique : un binaire Linux testé depuis Windows ne
+    # se lance pas du tout (erreur Win32 193, « %1 n'est pas une
+    # application Win32 valide ») — c'est le signe d'un exécutable compilé
+    # sous WSL et non d'un défaut du programme ou du cadre.
+    if est_binaire_linux(arguments.prog) and EST_WINDOWS:
+        print(ligne_balisee(
+            balise, "ALERTE",
+            f"« {arguments.prog} » est un exécutable Linux (ELF) : Windows "
+            "ne peut pas le lancer (erreur Win32 193, « %1 n'est pas une "
+            "application Win32 valide »). Compilez une version native : "
+            "cl /O2 /Fe:Schuffler.exe main.c (invite de commandes "
+            "Visual Studio) ou gcc -O2 -Wall -Wextra -o Schuffler.exe "
+            "main.c (MinGW), puis relancez avec --prog ./Schuffler.exe"),
+            flush=True)
+
     attendus_externes = {}
     if arguments.attendus:
         attendus_externes = charger_attendus(arguments.attendus)
@@ -1067,8 +1273,7 @@ def main(argv=None):
         return 2
 
     total = len(scenarios)
-    afficher_entete(arguments.prog, cadre.outil_pp is not None, balise,
-                    total)
+    afficher_entete(arguments.prog, cadre.pp_disponible(), balise, total)
 
     rapports = []
     interrompu = False
