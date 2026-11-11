@@ -8,12 +8,12 @@ Chaque catégorie ci-dessous reprend un aspect du fonctionnement déclaré du pr
 
 Comportement attendu : en l'absence de toute option de mode, le programme se ferme en demandant qu'un mode soit indiqué. Si le secret est absent en argument, il est demandé en saisie invisible.
 
-|                     Commande                     | Entrée `scanf` | Sortie standard | Clipboard                        |
-| :----------------------------------------------: | -------------- | --------------- | -------------------------------- |
-|                  `./Schuffler`                   | *Entrée*       | *Menu d'aide*   | *Rien*                           |
-|             `./Schuffler monsecret`              | *Bypassed*     | 0               | TODO                             |
-| `./Schuffler --length 32 --no-special monsecret` | *Bypassed*     | 0               | guk2LE7tA1b7BzYLrU5nKahvmMvBYjbK |
-|             `./Schuffler -l 4 test`              | *Bypassed*     | 0               | Ba%2                             |
+|                     Commande                     | Entrée `scanf` | Sortie standard | Clipboard |
+| :----------------------------------------------: | -------------- | --------------- | --------- |
+|                  `./Schuffler`                   | *Entrée*       | *Menu d'aide*   | *Rien*    |
+|             `./Schuffler monsecret`              | *Bypassed*     | *Menu d'aide*   | *Rien*    |
+| `./Schuffler --length 32 --no-special monsecret` | *Bypassed*     | *Menu d'aide*   | *Rien*    |
+|             `./Schuffler -l 4 test`              | *Bypassed*     | *Menu d'aide*   | *Rien*    |
 
 ## Catégorie 2 — Mode API
 
