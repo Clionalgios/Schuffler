@@ -1196,10 +1196,16 @@ static void copy_to_clipboard(void)
               "xclip, xsel, wl-copy ou pbcopy requis\n", stderr);
 #endif
     }
-    if (cfg.show_artefact)
-        show_artefact();
-    else
-        puts("0");
+
+    /* Mode hybride (-A -C) : le mode API étant actif, la sortie standard
+     * porte déjà la chaîne transformée (ou l'artefact) ; le « 0 » du
+     * mode clipboard n'y est pas ajouté. */
+    if (!cfg.mode_api) {
+        if (cfg.show_artefact)
+            show_artefact();
+        else
+            puts("0");
+    }
 }
 
 /* --------------------------------------------------------------------------
