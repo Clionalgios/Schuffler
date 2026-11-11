@@ -55,6 +55,10 @@
  *    Divergence d'appel : le mode API exige le secret en argument — la
  *    saisie invisible n'est proposée qu'en mode clipboard (protocole de
  *    tests, catégorie 2 : « Erreur : pas de clé transformable passée »).
+ *    Une chaîne transformable vide passée en argument compte pour une
+ *    absence de chaîne : en mode API l'appel est rejeté de même, sous
+ *    « Erreur : clé transformable passée non-utilisable » ; en mode
+ *    clipboard seul, la saisie invisible est proposée.
  *
  *  SOMMAIRE
  *     1. En-têtes et options de compilation
@@ -157,6 +161,13 @@ static Workspace ws = { NULL, NULL, NULL, NULL, { 0 } };
 /* Premier argument positionnel (le secret). Pointe dans argv ; l'original
  * de la ligne de commande est effacé par secure_cleanup (éq. « unset arg »). */
 static const char *secret_arg = NULL;
+
+/* Vrai lorsqu'un argument positionnel vide a été rencontré en premier :
+ * une chaîne transformable vide compte pour une absence de chaîne — elle
+ * n'est jamais retenue comme secret — et ce drapeau distingue le refus
+ * d'un secret passé vide de celui d'un secret jamais passé (protocole de
+ * tests, catégorie 2 : « Erreur : clé transformable passée non-utilisable »). */
+static int secret_arg_empty = 0;
 
 /* Alphabets par défaut — identiques aux constantes du script bash. */
 static const char CHARSET_LOWER[]         = "abcdefghijklmnopqrstuvwxyz";
@@ -391,7 +402,10 @@ static void show_help(FILE *stream)
           "        Secret fourni en argument.\n"
           "        S'il est absent, il sera demandé en saisie invisible (stdin),\n"
           "        sauf en mode API (-A), où il doit impérativement être passé\n"
-          "        en argument.\n"
+          "        en argument. Une chaîne vide compte pour une absence de\n"
+          "        chaîne : en mode API, l'appel est rejeté (erreur « clé\n"
+          "        transformable passée non-utilisable ») ; en mode clipboard\n"
+          "        seul, la saisie invisible est proposée.\n"
           "\n"
           "Exemples:\n"
           "  schuffler.sh -A monsecret\n"
@@ -551,8 +565,17 @@ static void parse_arguments(int argc, char **argv)
             exit(1);
         }
         else {
-            if (secret_arg == NULL)
-                secret_arg = arg; /* seul le premier compte */
+            /* Seul le premier argument positionnel compte, fût-il vide :
+             * une chaîne transformable vide compte pour une absence de
+             * chaîne ; elle n'est pas retenue comme secret, mais occupe
+             * bien la place du premier argument (les suivants, vides ou
+             * non, sont ignorés). */
+            if (secret_arg == NULL && !secret_arg_empty) {
+                if (*arg == '\0')
+                    secret_arg_empty = 1;
+                else
+                    secret_arg = arg;
+            }
         }
 
         i++;
@@ -575,14 +598,24 @@ static void parse_arguments(int argc, char **argv)
      * saisie invisible n'y est pas proposée — la sortie standard est le
      * canal du mot de passe, l'entrée standard n'est donc pas consommée —
      * l'appel est rejeté, avec message d'erreur puis aide, tous deux sur
-     * la sortie d'erreur (protocole de tests, catégorie 2 : « Erreur :
-     * pas de clé transformable passée »). */
+     * la sortie d'erreur. Une chaîne transformable vide compte pour une
+     * absence de chaîne : le refus est identique, seul le message
+     * distingue le secret passé vide du secret jamais passé (protocole
+     * de tests, catégorie 2 : « Erreur : clé transformable passée
+     * non-utilisable »). */
     if (cfg.mode_api && secret_arg == NULL) {
-        fprintf(stderr,
-                "Erreur : pas de clé transformable passée "
-                "(-A/--API exige le secret en argument, "
-                "la saisie invisible n'y est pas proposée).\n"
-                "\n");
+        if (secret_arg_empty)
+            fprintf(stderr,
+                    "Erreur : clé transformable passée non-utilisable "
+                    "(une chaîne transformable vide compte pour une "
+                    "absence de chaîne).\n"
+                    "\n");
+        else
+            fprintf(stderr,
+                    "Erreur : pas de clé transformable passée "
+                    "(-A/--API exige le secret en argument, "
+                    "la saisie invisible n'y est pas proposée).\n"
+                    "\n");
         show_help(stderr);
         exit(1);
     }
@@ -823,6 +856,9 @@ static void read_secrets(void)
 /* --------------------------------------------------------------------------
  * read_inputs — aiguillage : argument positionnel ou saisie
  * Équivalent bash : read_inputs (seul le premier argument compte).
+ * Une chaîne positionnelle vide compte pour une absence de chaîne :
+ * secret_arg restant NULL, le mode clipboard seul propose alors la
+ * saisie invisible (le mode API a déjà rejeté l'appel à l'analyse).
  * -------------------------------------------------------------------------- */
 static void read_inputs(void)
 {

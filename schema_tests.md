@@ -30,27 +30,28 @@ Comportement attendu : en l'absence de toute option de mode, le programme se fer
 | `./Schuffler -l 4 test`                          | *Bypassed*     | *Vide*          | `Erreur : aucun mode de fonctionnement indiqué`, puis *menu d'aide* | 1    | *Rien*    |
 ## Catégorie 2 — Mode API
 
-Comportement attendu : l'option `-A` renvoie directement la chaîne transformée sur la sortie standard, sans action sur le presse-papier. Le secret doit être passé en argument : la saisie invisible n'y est pas proposée et l'entrée standard n'est pas consommée.
+Comportement attendu : l'option `-A` renvoie directement la chaîne transformée sur la sortie standard, sans action sur le presse-papier. Le secret doit être passé en argument : la saisie invisible n'y est pas proposée et l'entrée standard n'est pas consommée. Une chaîne transformable vide passée en argument compte pour une absence de chaîne : la demande est rejetée de la même façon, sous un message propre au secret passé vide.
 
-| Commande                                      | Entrée `scanf` | Sortie standard                                      | Sortie d'erreur                                                | Code |
-| --------------------------------------------- | -------------- | ---------------------------------------------------- | -------------------------------------------------------------- | ---- |
-| `./Schuffler -A`                              | *Bypassed*     | *Vide*                                               | `Erreur : pas de clé transformable passée`, puis *menu d'aide* | 1    |
-| `./Schuffler -A test`                         | *Bypassed*     | `bafTBVD2lM%ZqIIOAHN6`                               | *Rien*                                                         | 0    |
-| `./Schuffler -A test1`                        | *Bypassed*     | `1awABg92YU%JrQ33R*FB`                               | *Rien*                                                         | 0    |
-| `./Schuffler -A -l 50 test`                   | *Bypassed*     | `b5UdvYAHNFWd!IIOrPnh%Zql3Me2lMeGjlBVDlM4FafTWKN%o6` | *Rien*                                                         | 0    |
-| `./Schuffler -A -l 4 test`                    | *Bypassed*     | `Ba%2`                                               | *Rien*                                                         | 0    |
-| `./Schuffler --API test` (option longue)      | *Bypassed*     | `bafTBVD2lM%ZqIIOAHN6`                               | *Rien*                                                         | 0    |
-| `./Schuffler -A ""` (secret vide en argument) | *Bypassed*     | *Vide*                                               | `Erreur : pas de clé transformable passée`, puis *menu d'aide* | 1    |
+| Commande                                      | Entrée `scanf` | Sortie standard                                      | Sortie d'erreur                                                        | Code |
+| --------------------------------------------- | -------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- | ---- |
+| `./Schuffler -A`                              | *Bypassed*     | *Vide*                                               | `Erreur : pas de clé transformable passée`, puis *menu d'aide*         | 1    |
+| `./Schuffler -A test`                         | *Bypassed*     | `bafTBVD2lM%ZqIIOAHN6`                               | *Rien*                                                                 | 0    |
+| `./Schuffler -A test1`                        | *Bypassed*     | `1awABg92YU%JrQ33R*FB`                               | *Rien*                                                                 | 0    |
+| `./Schuffler -A -l 50 test`                   | *Bypassed*     | `b5UdvYAHNFWd!IIOrPnh%Zql3Me2lMeGjlBVDlM4FafTWKN%o6` | *Rien*                                                                 | 0    |
+| `./Schuffler -A -l 4 test`                    | *Bypassed*     | `Ba%2`                                               | *Rien*                                                                 | 0    |
+| `./Schuffler --API test` (option longue)      | *Bypassed*     | `bafTBVD2lM%ZqIIOAHN6`                               | *Rien*                                                                 | 0    |
+| `./Schuffler -A ""` (secret vide en argument) | *Bypassed*     | *Vide*                                               | `Erreur : clé transformable passée non-utilisable`, puis *menu d'aide* | 1    |
 
 ## Catégorie 3 — Mode Clipboard
 
-Comportement attendu : l'option `-C` envoie la chaîne transformée dans le presse-papier, sans sortie de la chaîne sur la sortie standard (seul le « 0 » y est affiché).
+Comportement attendu : l'option `-C` envoie la chaîne transformée dans le presse-papier, sans sortie de la chaîne sur la sortie standard (seul le « 0 » y est affiché). Une chaîne transformable vide passée en argument compte pour une absence de chaîne : la saisie invisible est proposée, comme pour un appel sans secret.
 
 | Commande                                       | Entrée     | Sortie standard | Sortie d'erreur                                            | Code | Clipboard              |
 | ---------------------------------------------- | ---------- | --------------- | ---------------------------------------------------------- | ---- | ---------------------- |
 | `./Schuffler -C test`                          | *Bypassed* | `0`             | *Rien*                                                     | 0    | `bafTBVD2lM%ZqIIOAHN6` |
 | `./Schuffler -C monsecret`                     | *Bypassed* | `0`             | *Rien*                                                     | 0    | `Ya+mBqP2Lm%aGUN^i1@s` |
 | `./Schuffler -C` (saisie vide à l'invite)      | *Entrée*   | *Vide*          | `Erreur : aucune chaîne à transformer`, puis *menu d'aide* | 1    | *Vide*                 |
+| `./Schuffler -C ""` (chaîne vide en argument)  | *Entrée*   | `0`             | *Rien*                                                     | 0    | `bafTBVD2lM%ZqIIOAHN6` |
 | `./Schuffler --clipboard test` (option longue) | *Bypassed* | `0`             | *Rien*                                                     | 0    | `bafTBVD2lM%ZqIIOAHN6` |
 | `./Schuffler -C -l 4 test`                     | *Bypassed* | `0`             | *Rien*                                                     | 0    | `Ba%2`                 |
 

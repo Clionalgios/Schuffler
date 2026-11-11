@@ -456,6 +456,8 @@ ERREUR_SANS_MODE = PREFIX_CONTIENT + "Erreur : aucun mode"
 ERREUR_SECRET_VIDE = PREFIX_CONTIENT + "Erreur : aucune chaîne à transformer"
 ERREUR_CLE_ABSENTE = PREFIX_CONTIENT + \
     "Erreur : pas de clé transformable passée"
+ERREUR_CLE_NON_UTILISABLE = PREFIX_CONTIENT + \
+    "Erreur : clé transformable passée non-utilisable"
 ERREUR_LONGUEUR = PREFIX_CONTIENT + "Longueur invalide"
 ERREUR_CATEGORIES = PREFIX_CONTIENT + "Toutes les catégories"
 ERREUR_JEU_MANQUANT = PREFIX_CONTIENT + "Jeu de caractères spéciaux manquant"
@@ -493,6 +495,12 @@ SCENARIOS = [
       code_retour=0),
     S("api-l4", "Mode API", ["-A", "-l", "4", "test"],
       stdout="Ba%2", code_retour=0),
+    # Secret vide en argument : une chaîne transformable vide compte pour
+    # une absence de chaîne — la demande est rejetée avant toute lecture
+    # (l'entrée standard n'est pas consommée), avec un message propre au
+    # secret passé vide, puis le menu d'aide, sur la sortie d'erreur.
+    S("api-vide", "Mode API", ["-A", ""], secret_stdin="test",
+      stdout="", stderr=ERREUR_CLE_NON_UTILISABLE, clipboard="", code_retour=1),
 
     # -- Catégorie 3 : Mode Clipboard ---------------------------------------
     S("cb-test", "Mode Clipboard", ["-C", "test"],
