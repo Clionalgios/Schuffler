@@ -1169,13 +1169,21 @@ static int copy_to_clipboard_impl(void)
  * clipboard) ; le presse-papiers, lui, reçoit toujours la chaîne complète.
  * La longueur minimale étant 4, premier et dernier sont toujours distincts.
  * -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+ * show_artefact — artefact de la chaîne transformée (option -a)
+ * Premier et dernier caractère de ws.final, concaténés sans étiquette :
+ *   b6
+ * Remplace l'affichage en clair (mot de passe en mode API, « 0 » en mode
+ * clipboard) ; le presse-papiers, lui, reçoit toujours la chaîne complète.
+ * La longueur minimale étant 4, premier et dernier sont toujours distincts.
+ * -------------------------------------------------------------------------- */
 static void show_artefact(void)
 {
     size_t n = strlen(ws.final);
 
     if (n == 0)
         return;
-    printf("premier: %c, dernier: %c\n", ws.final[0], ws.final[n - 1]);
+    printf("%c%c\n", ws.final[0], ws.final[n - 1]);
 }
 
 /* --------------------------------------------------------------------------
