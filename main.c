@@ -35,7 +35,9 @@
  *      presse-papiers (mode clipboard uniquement) : xclip — équivalence
  *      avec le script bash — ou xsel, wl-copy, pbcopy en repli automatique.
  *    Windows : API Win32 (presse-papiers, console) ; aucune dépendance
- *      externe en mode clipboard.
+ *      externe en mode clipboard ; sorties redirigées (tubes, fichiers)
+ *      forcées en mode binaire — octets identiques à la compilation
+ *      POSIX —, la console conservant le mode texte à l'interactif.
  *
  *  ÉQUIVALENCE AVEC LE SCRIPT BASH
  *    Chaque section ci-dessous cite la fonction bash correspondante. Les
@@ -83,7 +85,8 @@
 #    define _CRT_SECURE_NO_WARNINGS
 #  endif
 #  include <windows.h>   /* presse-papiers et console Win32            */
-#  include <io.h>        /* _isatty, _fileno, _write                   */
+#  include <io.h>        /* _isatty, _fileno, _write, _setmode         */
+#  include <fcntl.h>     /* _O_BINARY : sorties redirigées en LF        */
 #else
 #  define _POSIX_C_SOURCE 200809L
 #  include <termios.h>   /* tcgetattr, tcsetattr (echo off, read -s)   */
@@ -276,6 +279,27 @@ static void handle_interrupt(int sig)
     (void)rc;
 #endif
     exit(1); /* déclenche secure_cleanup, comme en bash */
+}
+
+/* --------------------------------------------------------------------------
+ * init_stream_modes — sorties redirigées identiques au portage POSIX
+ * Le runtime C de Windows traduit chaque « \n » en « \r\n » sur les flux
+ * en mode texte : une sortie redirigée (tube, fichier) du mode API verrait
+ * son mot de passe terminé par un « \r » parasite — divergence byte à byte
+ * avec la compilation POSIX et corruption pour tout consommateur scripté
+ * qui pipe la chaîne transformée. Les flux détournés de la console passent
+ * donc en mode binaire (LF, à l'identique du portage POSIX) ; la console,
+ * elle, conserve le mode texte et affiche des sauts de ligne complets
+ * à l'interactif. POSIX n'a pas de mode texte : rien à faire.
+ * -------------------------------------------------------------------------- */
+static void init_stream_modes(void)
+{
+#if defined(_WIN32)
+    if (!_isatty(_fileno(stdout)))
+        _setmode(_fileno(stdout), _O_BINARY);
+    if (!_isatty(_fileno(stderr)))
+        _setmode(_fileno(stderr), _O_BINARY);
+#endif
 }
 
 /* --------------------------------------------------------------------------
@@ -1278,6 +1302,7 @@ static void output_result(void)
  * -------------------------------------------------------------------------- */
 int main(int argc, char **argv)
 {
+    init_stream_modes();
     atexit(secure_cleanup);
     init_signals();
     init_charsets();

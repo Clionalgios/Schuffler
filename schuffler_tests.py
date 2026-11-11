@@ -41,7 +41,10 @@ Presse-papiers :
     Windows : lecture et vidage natifs via l'API Win32 (ctypes :
     OpenClipboard/GetClipboardData, EmptyClipboard) — aucun outil
     externe requis, miroir exact de la copie réalisée par le portage C
-    (CF_TEXT suffit : l'alphabet de Schuffler est ASCII pur).
+    (CF_TEXT suffit : l'alphabet de Schuffler est ASCII pur). L'ouverture
+    est retentée quelques instants : le service d'historique du
+    presse-papiers, un gestionnaire ou un antivirus peut le retenir
+    brièvement juste après une copie.
     Linux et autres POSIX : la lecture nécessite l'un des outils
     suivants : xclip, xsel, wl-paste (Wayland) ou pbpaste (macOS). En
     son absence, la vérification du presse-papiers est marquée
@@ -134,6 +137,13 @@ EST_WINDOWS = os.name == "nt"
 # Format de presse-papiers texte ANSI (équivalent du CF_TEXT de main.c ;
 # l'alphabet de Schuffler est ASCII pur, la conversion Unicode est inutile).
 CF_TEXT = 1
+
+# Ouverture du presse-papiers Win32 : un voisin peut le retenir quelques
+# dizaines de millisecondes après une copie (service d'historique du
+# presse-papiers de Windows, gestionnaire, antivirus) ; l'ouverture est
+# retentée un court moment avant de conclure à l'indisponibilité.
+OUVERTURES_PP = 10        # tentatives d'ouverture du presse-papiers Win32
+DELAI_PP_MS = 25          # délai entre deux tentatives, en millisecondes
 
 # Outils de lecture du presse-papiers POSIX, par ordre de préférence.
 OUTILS_LECTURE_PP = [
@@ -358,6 +368,23 @@ def _pp_win32():
     return user32, kernel32
 
 
+def ouvrir_presse_papiers_win32(user32):
+    """Ouvre le presse-papiers en retentant quelques instants.
+
+    OpenClipboard échoue tant qu'un autre processus détient le
+    presse-papiers ; le service d'historique de Windows, un gestionnaire
+    de presse-papiers ou un antivirus peuvent le retenir brièvement juste
+    après une copie. Une lecture immédiate échouerait alors sans raison
+    apparente : l'ouverture est réessayée pendant un court moment avant
+    de conclure à l'indisponibilité.
+    """
+    for _ in range(OUVERTURES_PP):
+        if user32.OpenClipboard(None):
+            return True
+        time.sleep(DELAI_PP_MS / 1000)
+    return False
+
+
 def lire_presse_papiers_win32():
     """Lit le presse-papiers via OpenClipboard/GetClipboardData (CF_TEXT).
 
@@ -370,7 +397,7 @@ def lire_presse_papiers_win32():
     les outils POSIX.
     """
     user32, kernel32 = _pp_win32()
-    if not user32.OpenClipboard(None):
+    if not ouvrir_presse_papiers_win32(user32):
         return None
     try:
         poignee = user32.GetClipboardData(CF_TEXT)
@@ -392,7 +419,7 @@ def vider_presse_papiers_win32():
     """Vide le presse-papiers via EmptyClipboard (mêmes garanties que la
     lecture : aucun processus détaché, aucune sortie à neutraliser)."""
     user32, _ = _pp_win32()
-    if not user32.OpenClipboard(None):
+    if not ouvrir_presse_papiers_win32(user32):
         return
     try:
         user32.EmptyClipboard()
@@ -582,18 +609,21 @@ def tuer_groupe(processus, pgid=None):
 
     Windows : l'arbre complet est terminé par taskkill /F /T sur
     l'identifiant du programme (équivalent fonctionnel du killpg :
-    programme et sous-processus éventuels) ; taskkill sur un processus
-    déjà disparu échoue silencieusement. Le pgid n'existe pas sous
-    Windows et est ignoré.
+    programme et sous-processus éventuels) — uniquement si le programme
+    vit encore : sur un identifiant disparu, taskkill ne rejoint pas non
+    plus les enfants survivants, et l'appel inutile coûtait environ deux
+    cents millisecondes par scénario une fois le programme correctement
+    terminé. Le pgid n'existe pas sous Windows et est ignoré.
     """
     if EST_WINDOWS:
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(processus.pid)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=TIMEOUT_EXTINCTION)
-        except (subprocess.SubprocessError, OSError):
-            pass
+        if processus.poll() is None:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(processus.pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=TIMEOUT_EXTINCTION)
+            except (subprocess.SubprocessError, OSError):
+                pass
         try:
             processus.kill()
         except OSError:
