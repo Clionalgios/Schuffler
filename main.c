@@ -16,8 +16,9 @@
  *    5. Permutation déterministe : final[i] = result[(i*7+13) % n].
  *    6. Sortie selon le mode : API (chaîne en clair sur la sortie standard),
  *       clipboard (copie presse-papiers native selon la plateforme, puis
- *       affichage de « 0 »), ou les deux. Sans option de mode : clipboard
- *       par défaut. L'option -a/--artefact affiche l'artefact (premier et
+ *       affichage de « 0 »), ou les deux. Sans option de mode : erreur,
+ *       aucun mode n'étant appliqué par défaut — la transformation n'est
+ *       pas lancée. L'option -a/--artefact affiche l'artefact (premier et
  *       dernier caractère) : en complément de la chaîne en clair en mode
  *       API — toujours renvoyée —, à la place du « 0 » en mode clipboard
  *       seul ; le presse-papiers reçoit toujours la chaîne complète.
@@ -134,8 +135,8 @@ typedef struct {
 } Workspace;
 
 /* Valeurs par défaut : identiques à l'entête du script bash. Les deux modes
- * démarrent désactivés ; parse_arguments active le mode clipboard seul si
- * ni -A ni -C n'ont été passés. */
+ * démarrent désactivés ; parse_arguments rejette l'appel si ni -A ni -C
+ * n'a été passé : aucun mode n'est appliqué par défaut. */
 static Config cfg = {
     20,               /* OUTPUT_LENGTH */
     1, 1, 1, 1,       /* USE_LOWER, USE_UPPER, USE_DIGITS, USE_SPECIAL */
@@ -317,7 +318,9 @@ static void show_help(FILE *stream)
           "  -A: --API\n"
           "        Mode ligne de commande. Renvoie directement la chaîne de caractères transformée.\n"
           "\n"
-          "  Par défaut (aucune option) : mode clipboard.\n"
+          "  Aucun mode par défaut : -A ou -C est obligatoire.\n"
+          "  Sans option de mode, le programme refuse de lancer la transformation\n"
+          "  (erreur, code de retour 1, aide affichée).\n"
           "  Si les deux options sont passées, la chaîne est envoyée à la fois\n"
           "  sur la sortie standard et dans le presse-papier.\n"
           "\n"
@@ -361,14 +364,12 @@ static void show_help(FILE *stream)
           "        S'il est absent, il sera demandé en saisie invisible (stdin).\n"
           "\n"
           "Exemples:\n"
-          "  schuffler.sh\n"
-          "  schuffler.sh monsecret\n"
-          "  schuffler.sh --length 32 --no-special\n"
-          "  schuffler.sh --special-set '@#%' --exclude-chars '#'\n"
           "  schuffler.sh -A monsecret\n"
           "  schuffler.sh -C monsecret\n"
+          "  schuffler.sh -A --length 32 --no-special monsecret\n"
+          "  schuffler.sh -C --special-set '@#%' --exclude-chars '#' monsecret\n"
           "  schuffler.sh -A -C monsecret\n"
-          "  schuffler.sh -a monsecret\n",
+          "  schuffler.sh -C -a monsecret\n",
           stream);
 }
 
@@ -387,7 +388,7 @@ static void show_help(FILE *stream)
  *  Modes de sortie (nouveau par rapport au script) :
  *    - -A / --API       : mode API seul (sortie standard) ;
  *    - -C / --clipboard : mode clipboard seul (presse-papiers) ;
- *    - aucun des deux   : clipboard par défaut ;
+ *    - aucun des deux   : erreur — aucune transformation n'est lancée ;
  *    - les deux         : sortie standard ET presse-papiers.
  *
  *  Option d'affichage : -a / --artefact affiche l'artefact (premier et
@@ -524,9 +525,18 @@ static void parse_arguments(int argc, char **argv)
         i++;
     }
 
-    /* Mode par défaut : si ni -A ni -C n'ont été passés, mode clipboard. */
-    if (!cfg.mode_api && !cfg.mode_clipboard)
-        cfg.mode_clipboard = 1;
+    /* Sécurité d'appel : aucun mode par défaut. Si ni -A ni -C n'ont été
+     * passés, la transformation n'est pas lancée : l'appel est rejeté,
+     * avec message d'erreur puis aide, tous deux sur la sortie d'erreur
+     * (la sortie standard reste réservée à la chaîne transformée). */
+    if (!cfg.mode_api && !cfg.mode_clipboard) {
+        fprintf(stderr,
+                "Erreur : aucun mode de fonctionnement indiqué "
+                "(-A/--API ou -C/--clipboard requis).\n"
+                "\n");
+        show_help(stderr);
+        exit(1);
+    }
 
     if (!cfg.use_lower && !cfg.use_upper && !cfg.use_digits && !cfg.use_special) {
         fputs("Toutes les catégories ont été exclues\n", stderr);
@@ -1073,7 +1083,7 @@ static void shuffle_result(void)
  *  Aiguillage selon les modes actifs, résolus par parse_arguments :
  *    - mode API seul  (-A)         : mot de passe en clair sur la sortie
  *                                   standard, puis l'artefact si -a ;
- *    - mode clipboard (-C, défaut) : copie presse-papiers puis affichage
+ *    - mode clipboard (-C)         : copie presse-papiers puis affichage
  *                                   de « 0 », comme le script bash d'origine ;
  *    - modes combinés (-A -C)      : sortie standard PUIS presse-papiers ;
  *                                   la sortie standard porte le mot de passe
