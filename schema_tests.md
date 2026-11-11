@@ -79,7 +79,7 @@ Comportement attendu : le même secret combiné aux mêmes options produit toujo
 
 ## Catégorie 6 — Longueur du mot de passe
 
-Comportement attendu : la longueur par défaut est de 20 caractères ; la longueur minimale acceptée est de 4 caractères. L'analyse de la valeur est celle du script bash : un zéro initial désigne de l'octal (`-l 010` vaut 8).
+Comportement attendu : la longueur par défaut est de 20 caractères ; la longueur minimale acceptée est de 4 caractères. Aucune notation de numération suggérée par l'écriture de la valeur n'est interprétée : un zéro initial est retiré et la valeur est lue comme expression décimale (`-l 010` vaut 10, `-l 08` vaut 8) ; une valeur contenant une lettre — notation hexadécimale (`0x10`) ou binaire (`0b1010`) — refuse la commande.
 
 | Commande                                                    | Entrée `scanf` | Sortie standard                                                                                        | Sortie d'erreur                                                                           | Code |
 | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | ---- |
@@ -90,8 +90,10 @@ Comportement attendu : la longueur par défaut est de 20 caractères ; la longue
 | `./Schuffler -A -l 3 test` (sous le minimum)                | *Bypassed*     | *Vide*                                                                                                 | `Longueur invalide`                                                                       | 1    |
 | `./Schuffler -A -l 0 test` (valeur nulle)                   | *Bypassed*     | *Vide*                                                                                                 | `Longueur invalide`                                                                       | 1    |
 | `./Schuffler -A -l test` (valeur non numérique)             | *Bypassed*     | *Vide*                                                                                                 | `Longueur invalide`                                                                       | 1    |
-| `./Schuffler -A -l 010 test` (zéro initial : octal, vaut 8) | *Bypassed*     | *À définir* (longueur 8)                                                                               | *Rien*                                                                                    | 0    |
-| `./Schuffler -A -l 08 test` (chiffre impossible en octal)   | *Bypassed*     | *Vide*                                                                                                 | `schuffler: 08: value too great for base (error token is "08")`, puis `Longueur invalide` | 1    |
+| `./Schuffler -A -l 010 test` (zéro initial : lu en décimal, vaut 10) | *Bypassed*     | `%afIBVA2l6`                                                                                          | *Rien*                                                                                    | 0    |
+| `./Schuffler -A -l 08 test` (zéro initial : lu en décimal, vaut 8)  | *Bypassed*     | `AI%2Baf6`                                                                                            | *Rien*                                                                                    | 0    |
+| `./Schuffler -A -l 0x10 test` (hexadécimal : lettres → refus)       | *Bypassed*     | *Vide*                                                                                                 | `Longueur invalide`                                                                       | 1    |
+| `./Schuffler -A -l 0b1010 test` (binaire : lettres → refus)         | *Bypassed*     | *Vide*                                                                                                 | `Longueur invalide`                                                                       | 1    |
 | `./Schuffler -A -l 100 test`                                | *Bypassed*     | `b5UdvYAFOD*5OIIOrPnhVSdeKOu2lMeGjl!6n$StCafTWKN%ozVdxYwXAHNFWd!N6HLms^%Zql3MeT5!HEuCBVDlM4FTl*ef+tX6` | *Rien*                                                                                    | 0    |
   
 ## Catégorie 7 — Jeux de caractères (exclusions)
@@ -173,3 +175,4 @@ Comportement attendu : le parcours de la ligne de commande conserve les particul
 | `./Schuffler -A test monsecret` (seul le premier argument compte)                       | *Bypassed*     | `bafTBVD2lM%ZqIIOAHN6`                              | *Rien*                                                         | 0    |
 | `./Schuffler -A -test` (un secret ne peut commencer par un tiret)                       | *Bypassed*     | *Vide*                                              | `Option inconnue: -test`                                       | 1    |
 | `./Schuffler -A --exclude-chars a --exclude-chars e test` (la dernière liste l'emporte) | *Bypassed*     | *À définir* (équivalent à `--exclude-chars e test`) | *Rien*                                                         | 0    |
+

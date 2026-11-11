@@ -193,7 +193,9 @@ CATEGORIES = {
         "mot de passe, quelle que soit l'exécution.",
     "Longueur":
         "La longueur par défaut est de 20 caractères ; la longueur minimale "
-        "acceptée est de 4 caractères.",
+        "acceptée est de 4 caractères. Aucune notation de numération "
+        "n'est interprétée : une valeur contenant une lettre est refusée, "
+        "un zéro initial est retiré et la valeur est lue en décimal.",
     "Exclusions":
         "Chaque option d'exclusion retire une classe de caractères de la "
         "transformation ; --exclude-chars est appliquée après tous les jeux.",
@@ -538,6 +540,18 @@ SCENARIOS = [
       stdout="b5UdvYAFOD*5OIIOrPnhVSdeKOu2lMeGjl!6n$StCafTWKN%ozVdxYwX"
              "AHNFWd!N6HLms^%Zql3MeT5!HEuCBVDlM4FTl*ef+tX6"),
     S("lg-non-num", "Longueur", ["-A", "-l", "test"],
+      stdout="", stderr=ERREUR_LONGUEUR, code_retour=1),
+    # Aucune notation de numération suggérée par l'écriture n'est
+    # interprétée : un zéro initial est retiré et la valeur lue comme
+    # expression décimale ; une valeur contenant une lettre (hexadécimal
+    # « 0x », binaire « 0b ») refuse la commande.
+    S("lg-010", "Longueur", ["-A", "-l", "010", "test"],
+      stdout="%afIBVA2l6"),
+    S("lg-08", "Longueur", ["-A", "-l", "08", "test"],
+      stdout="AI%2Baf6"),
+    S("lg-hexa", "Longueur", ["-A", "-l", "0x10", "test"],
+      stdout="", stderr=ERREUR_LONGUEUR, code_retour=1),
+    S("lg-binaire", "Longueur", ["-A", "-l", "0b1010", "test"],
       stdout="", stderr=ERREUR_LONGUEUR, code_retour=1),
 
     # -- Catégorie 7 : Jeux de caractères (exclusions) -----------------------

@@ -41,10 +41,16 @@
  *
  *  ÉQUIVALENCE AVEC LE SCRIPT BASH
  *    Chaque section ci-dessous cite la fonction bash correspondante. Les
- *    particularités du script sont conservées à dessein : parsing octal de
- *    --length (bash : -l 010 vaut 8), quirk de « -- » (le reste est ignoré),
- *    sémantique de « read » sans -r (antislashs, rognage IFS), arrêt fatal
- *    sur alphabet de classe vide (bash : division par zéro).
+ *    particularités du script sont conservées à dessein : quirk de « -- »
+ *    (le reste est ignoré), sémantique de « read » sans -r (antislashs,
+ *    rognage IFS), arrêt fatal sur alphabet de classe vide (bash :
+ *    division par zéro).
+ *    Divergence d'analyse : la valeur de --length n'est jamais interprétée
+ *    dans un système de numération suggéré par son écriture — ni octal
+ *    pour un zéro initial (bash : -l 010 vaut 8), ni hexadécimal pour
+ *    « 0x », ni binaire pour « 0b ». Une valeur contenant une lettre
+ *    refuse la commande ; un zéro initial est retiré et la valeur est
+ *    lue comme expression décimale (-l 010 vaut 10).
  *    Divergences volontaires de flux : tous les messages d'erreur sont
  *    écrits sur la sortie d'erreur — option inconnue, longueur invalide,
  *    listes manquantes, catégories toutes exclues, alphabet final vide,
@@ -428,6 +434,12 @@ static void show_help(FILE *stream)
  *    - « -- » s'arrête ET ignore le reste (quirk du script original) ;
  *    - toute chaîne commençant par « - » est une option : inconnue -> erreur ;
  *    - seul le premier argument positionnel est retenu (le secret).
+ *    Divergence pour -l/--length : la valeur n'est jamais interprétée
+ *    dans un système de numération suggéré par son écriture — ni octal
+ *    pour un zéro initial, ni hexadécimal (« 0x »), ni binaire
+ *    (« 0b »). Une valeur contenant une lettre refuse la commande ;
+ *    un zéro initial est retiré et la valeur est lue comme expression
+ *    décimale.
  *
  *  Modes de sortie (nouveau par rapport au script) :
  *    - -A / --API       : mode API seul (sortie standard) ;
@@ -452,36 +464,34 @@ static void show_help(FILE *stream)
  * parse_length — validation d'une longueur
  *
  * Équivalent bash : [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" -ge 4 ]]
- * Particularité bash : en contexte arithmétique, un zéro initial désigne
- * de l'octal ('-l 010' vaut 8 ; '-l 08' est une erreur).
+ * Divergence d'analyse : aucune notation de numération n'est interprétée
+ * selon l'écriture de la valeur — ni octal pour un zéro initial (le
+ * script bash lisait '-l 010' en octal, soit 8), ni hexadécimal pour
+ * « 0x », ni binaire pour « 0b ». Une valeur contenant une lettre refuse
+ * la commande ; un zéro initial est retiré et la valeur restante est
+ * lue comme expression décimale ('-l 010' vaut 10 ; '-l 08' vaut 8).
  *
  * Retour : 1 si valide (valeur stockée dans *out), 0 sinon.
  * -------------------------------------------------------------------------- */
 static int parse_length(const char *s, unsigned long long *out)
 {
-    int base = 10;
+    const char *p;
 
     if (*s == '\0')
         return 0;
-    for (const char *p = s; *p != '\0'; p++) {
-        if (*p < '0' || *p > '9')
+    for (p = s; *p != '\0'; p++) {
+        if (*p < '0' || *p > '9') /* toute lettre -> refus de la commande */
             return 0;
     }
 
-    if (s[0] == '0' && s[1] != '\0') {
-        base = 8;
-        for (const char *p = s + 1; *p != '\0'; p++) {
-            if (*p == '8' || *p == '9') {
-                fprintf(stderr,
-                        "schuffler: %s: value too great for base "
-                        "(error token is \"%s\")\n", s, s);
-                return 0;
-            }
-        }
-    }
+    /* Un zéro initial ne désigne pas l'octal : il est retiré et la
+     * valeur est lue comme expression décimale. */
+    p = s;
+    while (p[0] == '0' && p[1] != '\0')
+        p++;
 
     errno = 0;
-    unsigned long long v = strtoull(s, NULL, base);
+    unsigned long long v = strtoull(p, NULL, 10);
     if (errno == ERANGE) /* valeur hors bornes -> erreur -> invalide */
         return 0;
     if (v < 4)
