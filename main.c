@@ -8,7 +8,8 @@
  *    passe, en bash comme en C (sorties et codes de retour identiques).
  *
  *  CHAÎNE DE TRAITEMENT
- *    1. Lecture du secret : argument positionnel, sinon saisie invisible.
+ *    1. Lecture du secret : argument positionnel, sinon saisie invisible
+ *       (mode clipboard seul ; le mode API exige le secret en argument).
  *    2. Construction de l'alphabet selon les options et les exclusions.
  *    3. Expansion déterministe : SHA-256("secret:compteur") ; chaque paire
  *       hexadécimale donne un octet, projeté sur l'alphabet par modulo.
@@ -49,6 +50,9 @@
  *    sur la sortie d'erreur ; le script bash affiche « 1 » sur la sortie
  *    standard). La sortie standard reste ainsi réservée à la chaîne
  *    transformée en mode API et au « 0 » du mode clipboard.
+ *    Divergence d'appel : le mode API exige le secret en argument — la
+ *    saisie invisible n'est proposée qu'en mode clipboard (protocole de
+ *    tests, catégorie 2 : « Erreur : pas de clé transformable passée »).
  *
  *  SOMMAIRE
  *     1. En-têtes et options de compilation
@@ -361,7 +365,9 @@ static void show_help(FILE *stream)
           "Entrée:\n"
           "  secret\n"
           "        Secret fourni en argument.\n"
-          "        S'il est absent, il sera demandé en saisie invisible (stdin).\n"
+          "        S'il est absent, il sera demandé en saisie invisible (stdin),\n"
+          "        sauf en mode API (-A), où il doit impérativement être passé\n"
+          "        en argument.\n"
           "\n"
           "Exemples:\n"
           "  schuffler.sh -A monsecret\n"
@@ -390,6 +396,9 @@ static void show_help(FILE *stream)
  *    - -C / --clipboard : mode clipboard seul (presse-papiers) ;
  *    - aucun des deux   : erreur — aucune transformation n'est lancée ;
  *    - les deux         : sortie standard ET presse-papiers.
+ *
+ *  En mode API, le secret doit être passé en argument : la saisie
+ *  invisible n'y est pas proposée (erreur puis aide, code 1 sinon).
  *
  *  Option d'affichage : -a / --artefact affiche l'artefact (premier et
  *  dernier caractère) en complément de la chaîne en clair en mode API,
@@ -533,6 +542,22 @@ static void parse_arguments(int argc, char **argv)
         fprintf(stderr,
                 "Erreur : aucun mode de fonctionnement indiqué "
                 "(-A/--API ou -C/--clipboard requis).\n"
+                "\n");
+        show_help(stderr);
+        exit(1);
+    }
+
+    /* Sécurité d'appel : le mode API exige le secret en argument. La
+     * saisie invisible n'y est pas proposée — la sortie standard est le
+     * canal du mot de passe, l'entrée standard n'est donc pas consommée —
+     * l'appel est rejeté, avec message d'erreur puis aide, tous deux sur
+     * la sortie d'erreur (protocole de tests, catégorie 2 : « Erreur :
+     * pas de clé transformable passée »). */
+    if (cfg.mode_api && secret_arg == NULL) {
+        fprintf(stderr,
+                "Erreur : pas de clé transformable passée "
+                "(-A/--API exige le secret en argument, "
+                "la saisie invisible n'y est pas proposée).\n"
                 "\n");
         show_help(stderr);
         exit(1);

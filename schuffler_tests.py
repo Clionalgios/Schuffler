@@ -330,6 +330,8 @@ def S(identifiant, categorie, arguments, secret_stdin=None,
 
 ERREUR_SANS_MODE = PREFIX_CONTIENT + "Erreur : aucun mode"
 ERREUR_SECRET_VIDE = PREFIX_CONTIENT + "Erreur : aucune chaîne à transformer"
+ERREUR_CLE_ABSENTE = PREFIX_CONTIENT + \
+    "Erreur : pas de clé transformable passée"
 ERREUR_LONGUEUR = PREFIX_CONTIENT + "Longueur invalide"
 ERREUR_CATEGORIES = PREFIX_CONTIENT + "Toutes les catégories"
 ERREUR_JEU_MANQUANT = PREFIX_CONTIENT + "Jeu de caractères spéciaux manquant"
@@ -351,8 +353,13 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_SANS_MODE, clipboard="", code_retour=1),
 
     # -- Catégorie 2 : Mode API ---------------------------------------------
+    # Conformément au protocole, le mode API exige le secret en argument :
+    # l'entrée standard fournie ne doit pas être consommée (le secret
+    # saisi à l'invite n'y est pas accepté), l'erreur est attendue sur la
+    # sortie d'erreur — divergence de flux du portage C documentée dans
+    # main.c — et le presse-papiers n'est pas touché.
     S("api-scanf", "Mode API", ["-A"], secret_stdin="test",
-      stdout=PREFIX_CONTIENT + "Erreur", code_retour=1),
+      stdout="", stderr=ERREUR_CLE_ABSENTE, clipboard="", code_retour=1),
     S("api-test", "Mode API", ["-A", "test"],
       stdout="bafTBVD2lM%ZqIIOAHN6", code_retour=0),
     S("api-test1", "Mode API", ["-A", "test1"],
@@ -858,13 +865,19 @@ def afficher_categorie(categorie, balise):
 
 def afficher_en_cours(scenario, programme, balise, terminal, numero, total):
     """Ligne temporaire : signalée à l'écran avant l'exécution, uniquement
-    sur un terminal interactif (elle est alors réécrite par le verdict)."""
+    sur un terminal interactif (elle est alors réécrite par le verdict).
+    Le corps est borné à la largeur du terminal : au-delà, la ligne
+    passerait sur plusieurs rangées et l'effacement « \\r\\033[K » du
+    verdict ne nettoierait que la dernière, laissant à l'écran un
+    fragment périmé de la ligne « EN COURS »."""
     if not terminal:
         return
     commande = " ".join([programme] + scenario.arguments)
-    sys.stdout.write("\r\033[K" + ligne_balisee(
-        balise, "EN_COURS",
-        f"{numero}/{total} {scenario.identifiant:<20} {commande}"))
+    corps = f"{numero}/{total} {scenario.identifiant:<20} {commande}"
+    largeur = shutil.get_terminal_size().columns - 13  # balise + espace
+    if largeur > 0 and len(corps) >= largeur:
+        corps = corps[:largeur - 1] + "…"
+    sys.stdout.write("\r\033[K" + ligne_balisee(balise, "EN_COURS", corps))
     sys.stdout.flush()
 
 
