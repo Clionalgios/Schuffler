@@ -98,7 +98,7 @@ Comportement attendu : la longueur par défaut est de 20 caractères ; la longue
   
 ## Catégorie 7 — Jeux de caractères (exclusions)
 
-Comportement attendu : chaque option d'exclusion retire une classe de caractères de la transformation ; `--exclude-chars` est appliquée après tous les jeux. Une classe active mais vidée par les exclusions interrompt le programme (particularité du script d'origine reproduite à dessein), de même qu'un alphabet final vide.  
+Comportement attendu : chaque option d'exclusion retire une classe de caractères de la transformation ; `--exclude-chars` est appliquée après tous les jeux. L'option est répétable : les listes passées successivement sont agglomérées, les caractères en double éliminés (première occurrence conservée, ordre d'apparition préservé). Une classe active mais vidée par les exclusions interrompt le programme (particularité du script d'origine reproduite à dessein), de même qu'un alphabet final vide.  
 
 | Commande                                                                                                              | Entrée `scanf` | Sortie standard                                      | Sortie d'erreur                                          | Code |
 | --------------------------------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------- | -------------------------------------------------------- | ---- |
@@ -115,7 +115,7 @@ Comportement attendu : chaque option d'exclusion retire une classe de caractère
 
 ## Catégorie 8 — Jeu de caractères spéciaux personnalisé
 
-Comportement attendu : `--special-set` force le jeu de caractères spéciaux ; il peut être combiné à `--exclude-chars`, laquelle s'applique en dernier. Le jeu personnalisé est sans effet si la classe des spéciaux est désactivée (`--no-special`).
+Comportement attendu : `--special-set` force le jeu de caractères spéciaux ; il peut être combiné à `--exclude-chars`, laquelle s'applique en dernier. L'option est répétable : les jeux passés successivement sont agglomérés, les caractères en double éliminés (première occurrence conservée, ordre d'apparition préservé). Le jeu personnalisé est sans effet si la classe des spéciaux est désactivée (`--no-special`).
 
 | Commande                                                                                    | Entrée `scanf` | Sortie standard                                      | Sortie d'erreur                       | Code |
 | ------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------- | ------------------------------------- | ---- |
@@ -123,7 +123,7 @@ Comportement attendu : `--special-set` force le jeu de caractères spéciaux ; i
 | `./Schuffler -A --special-set '@#$%' --exclude-chars '#' test`                              | *Bypassed*     | `nalTBVD2x4@$COO0ST5f`                               | *Rien*                                | 0    |
 | `./Schuffler -A --special-set '@#%' -l 50 test`                                             | *Bypassed*     | `n5UpBYST5RWvdOO0rVnz@#CxcYw2x4qMjDBVDrM@FalT8KTmof` | *Rien*                                | 0    |
 | `./Schuffler -A --special-set '@#%' --no-special test` (jeu sans effet : classe désactivée) | *Bypassed*     | *À définir*                                          | *Rien*                                | 0    |
-| `./Schuffler -A --special-set '@@@' test` (caractères répétés)                              | *Bypassed*     | *À définir*                                          | *Rien*                                | 0    |
+| `./Schuffler -A --special-set '@@@' test` (caractères répétés : doublons éliminés, équivalent à `--special-set '@'`) | *Bypassed*     | `ranTBVD2B@@eGQQ4YXal`                               | *Rien*                                | 0    |
 | `./Schuffler -A --special-set '' test` (jeu spécial vide)                                   | *Bypassed*     | *Vide*                                               | `Jeu de caractères spéciaux manquant` | 1    |
 
 ## Catégorie 9 — Artefact
@@ -167,12 +167,14 @@ Comportement attendu : en mode clipboard sans secret en argument, le secret est 
 
 ## Catégorie 12 — Sémantique de l'analyse
 
-Comportement attendu : le parcours de la ligne de commande conserve les particularités du script d'origine : seul le premier argument positionnel sert de secret, toute chaîne commençant par un tiret est traitée comme une option, « -- » interrompt l'analyse et le reste de la ligne est ignoré, et la dernière valeur passée à une option à valeur l'emporte.
+Comportement attendu : le parcours de la ligne de commande conserve les particularités du script d'origine : seul le premier argument positionnel sert de secret, toute chaîne commençant par un tiret est traitée comme une option, et « -- » interrompt l'analyse en ignorant le reste de la ligne. Les options de jeu de caractères (`--exclude-chars`, `--special-set`) sont répétables : les valeurs passées successivement sont agglomérées, puis les caractères en double en sont éliminés (première occurrence conservée, ordre d'apparition préservé). La dernière valeur passée à `-l/--length` l'emporte.
 
 | Commande                                                                                | Entrée `scanf` | Sortie standard                                     | Sortie d'erreur                                                | Code |
 | --------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------- | -------------------------------------------------------------- | ---- |
 | `./Schuffler -A -- test` (le secret suivant « -- » est ignoré)                          | *Bypassed*     | *Vide*                                              | `Erreur : pas de clé transformable passée`, puis *menu d'aide* | 1    |
 | `./Schuffler -A test monsecret` (seul le premier argument compte)                       | *Bypassed*     | `bafTBVD2lM%ZqIIOAHN6`                              | *Rien*                                                         | 0    |
 | `./Schuffler -A -test` (un secret ne peut commencer par un tiret)                       | *Bypassed*     | *Vide*                                              | `Option inconnue: -test`                                       | 1    |
-| `./Schuffler -A --exclude-chars a --exclude-chars e test` (la dernière liste l'emporte) | *Bypassed*     | *À définir* (équivalent à `--exclude-chars e test`) | *Rien*                                                         | 0    |
+| `./Schuffler -A --exclude-chars a --exclude-chars e test` (listes agglomérées) | *Bypassed*     | `hbjVBXF2rU%5wMMUINV$` (équivalent à `--exclude-chars 'ae' test`) | *Rien*                                                         | 0    |
+| `./Schuffler -A --special-set '@#' --special-set '#%' test` (jeux agglomérés) | *Bypassed*     | `nalTBVD2x4@#COO0ST5f` (équivalent à `--special-set '@#%'`) | *Rien*                                                         | 0    |
+| `./Schuffler -A -l 50 -l 4 test` (la dernière longueur l'emporte) | *Bypassed*     | `Ba%2`                              | *Rien*                                                         | 0    |
 

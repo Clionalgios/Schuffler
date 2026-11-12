@@ -195,13 +195,18 @@ CATEGORIES = {
         "La longueur par défaut est de 20 caractères ; la longueur minimale "
         "acceptée est de 4 caractères. Aucune notation de numération "
         "n'est interprétée : une valeur contenant une lettre est refusée, "
-        "un zéro initial est retiré et la valeur est lue en décimal.",
+        "un zéro initial est retiré et la valeur est lue en décimal. Une "
+        "option -l répétée retient la dernière valeur valide.",
     "Exclusions":
         "Chaque option d'exclusion retire une classe de caractères de la "
-        "transformation ; --exclude-chars est appliquée après tous les jeux.",
+        "transformation ; --exclude-chars est appliquée après tous les "
+        "jeux. L'option est répétable : les listes passées successivement "
+        "sont agglomérées, les caractères en double éliminés.",
     "Spéciaux":
         "--special-set force le jeu de caractères spéciaux ; il peut être "
-        "combiné à --exclude-chars, laquelle s'applique en dernier.",
+        "combiné à --exclude-chars, laquelle s'applique en dernier. "
+        "L'option est répétable : les jeux passés successivement sont "
+        "agglomérés, les caractères en double éliminés.",
     "Artefact":
         "L'option -a affiche l'artefact de la chaîne transformée (premier "
         "et dernier caractère) : en complément du clair en mode API, à la "
@@ -553,6 +558,9 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_LONGUEUR, code_retour=1),
     S("lg-binaire", "Longueur", ["-A", "-l", "0b1010", "test"],
       stdout="", stderr=ERREUR_LONGUEUR, code_retour=1),
+    # Une option -l répétée retient la dernière valeur valide passée.
+    S("lg-repete", "Longueur", ["-A", "-l", "50", "-l", "4", "test"],
+      stdout="Ba%2"),
 
     # -- Catégorie 7 : Jeux de caractères (exclusions) -----------------------
     S("no-lower", "Exclusions", ["-A", "--no-lower", "test"],
@@ -576,6 +584,19 @@ SCENARIOS = [
     S("exclude-voyelles", "Exclusions",
       ["-A", "--exclude-chars", "aeiou", "-l", "50", "test"],
       stdout="p!ZrF3UW7U1xcSS3wZrB%^FA#1y2A6sQmFB0IvR^KbnY@PXmsd"),
+    # Option répétable : les listes passées successivement sont agglomérées,
+    # puis débarrassées de leurs caractères en double — la première
+    # occurrence l'emporte, l'ordre d'apparition est préservé
+    # (« --exclude-chars a --exclude-chars e » équivaut à
+    # « --exclude-chars ae »).
+    S("exclude-repete", "Exclusions",
+      ["-A", "--exclude-chars", "a", "--exclude-chars", "e", "test"],
+      stdout="hbjVBXF2rU%5wMMUINV$"),
+    # Les caractères en double de l'ensemble aggloméré sont éliminés :
+    # « ae » puis « ea » équivaut à « ae ».
+    S("exclude-repete-doublons", "Exclusions",
+      ["-A", "--exclude-chars", "ae", "--exclude-chars", "ea", "test"],
+      stdout="hbjVBXF2rU%5wMMUINV$"),
 
     # -- Catégorie 8 : Jeu de spéciaux personnalisé ---------------------------
     S("sp-simple", "Spéciaux", ["-A", "--special-set", "@#%", "test"],
@@ -586,6 +607,17 @@ SCENARIOS = [
     S("sp-l50", "Spéciaux",
       ["-A", "--special-set", "@#%", "-l", "50", "test"],
       stdout="n5UpBYST5RWvdOO0rVnz@#CxcYw2x4qMjDBVDrM@FalT8KTmof"),
+    # Option répétable : les jeux passés successivement sont agglomérés,
+    # puis débarrassés de leurs caractères en double — l'agglomération
+    # de « @# » et « #% » équivaut à « @#% » (cf. sp-simple).
+    S("sp-repete", "Spéciaux",
+      ["-A", "--special-set", "@#", "--special-set", "#%", "test"],
+      stdout="nalTBVD2x4@#COO0ST5f"),
+    # Les caractères en double du jeu sont éliminés : « @@@ » équivaut
+    # à « @ ».
+    S("sp-doublons", "Spéciaux",
+      ["-A", "--special-set", "@@@", "test"],
+      stdout="ranTBVD2B@@eGQQ4YXal"),
     S("sp-vide", "Spéciaux", ["-A", "--special-set", "", "test"],
       stdout="", stderr=ERREUR_JEU_MANQUANT, code_retour=1),
 
