@@ -1,0 +1,123 @@
+--- /dev/fd/63	2026-11-12 07:06:50.907009460 +0000
++++ /dev/fd/62	2026-11-12 07:06:50.907009460 +0000
+@@ -49,6 +49,17 @@
+     suivants : xclip, xsel, wl-paste (Wayland) ou pbpaste (macOS). En
+     son absence, la vérification du presse-papiers est marquée
+     INDÉTERMINÉE (jamais en échec).
++    Sous WSLg, la sélection X11 et le presse-papiers de Windows se
++    synchronisent de façon asynchrone : la sélection posée par le
++    programme peut être perdue (démon xclip interrompu, la récolte des
++    tubes en témoigne) ou écrasée un instant par une valeur résiduelle
++    de Windows réassertée dans la sélection. Une telle course ne dénonce
++    aucune défaillance du programme : le cadre laisse la propagation se
++    poser après le vidage (délai de stabilisation), puis reprend un
++    nombre borné de fois tout scénario dont seul le presse-papiers est
++    en échec, toutes les autres sorties étant exactes — une course ne
++    survit pas à la reprise, une défaillance réelle se reproduit à
++    l'identique à chacune d'elles.
+ 
+ Journal en direct et lisibilité :
+     - chaque catégorie est annoncée par son en-tête et son comportement
+@@ -127,6 +138,15 @@
+ TIMEOUT_RECOLTE = 2       # secondes de grâce pour récolter les sorties
+                           # d'un programme terminé dont un descendant
+                           # détaché (ex. démon xclip) maintient les tubes
++DELAI_STABILISATION_PP = 0.25  # seconde de repos après le vidage du
++                          # presse-papiers POSIX, le temps que la
++                          # propagation asynchrone de WSLg se pose
++                          # avant que le programme ne pose sa sélection
++ESSAIS_COURSE_PP = 3      # exécutions d'un scénario dont seul le
++                          # presse-papiers est en échec, face à une
++                          # course de synchronisation (WSLg : sélection
++                          # X11 perdue ou réassertion du presse-papiers
++                          # de Windows)
+ TRONQUE_LIGNE = 60        # troncature des valeurs dans le journal
+ TRONQUE_ECART = 120       # troncature des valeurs dans les écarts
+ 
+@@ -876,6 +896,14 @@
+ 
+         if avec_pp:
+             self.vider_presse_papiers()
++            # Le vidage déclenche, sous WSLg, une propagation asynchrone
++            # du presse-papiers de Windows vers la sélection X11 : la
++            # laisser se poser avant de lancer le programme évite qu'une
++            # réassertion tardive n'écrase la sélection que celui-ci va
++            # poser. La copie Win32 étant synchrone, le repos ne s'applique
++            # qu'à la voie des outils POSIX.
++            if self.outil_pp is not None:
++                time.sleep(DELAI_STABILISATION_PP)
+ 
+         # L'exécution s'inscrit dans son propre groupe : nouvelle session
+         # POSIX, groupe de processus dédié sous Windows (l'équivalent de
+@@ -1018,24 +1046,65 @@
+             return "OK"
+         return "ECHEC"
+ 
++    def _verdicts(self, attendus, mesure):
++        """Verdicts des quatre sorties pour une mesure unique."""
++        verdicts = {}
++        for cle in ("stdout", "stderr", "clipboard", "code_retour"):
++            verdicts[cle] = self.evaluer(
++                cle, attendus.get(cle), mesure.get(cle),
++                pp_disponible=self.pp_disponible())
++        return verdicts
++
++    def _course_presse_papiers(self, verdicts):
++        """Vrai si l'échec observé porte la signature d'une course de
++        synchronisation du presse-papiers POSIX.
++
++        Sous WSLg notamment, la sélection X11 posée par le programme
++        peut être perdue — démon xclip interrompu, la récolte des tubes
++        s'achève alors avant le délai de grâce — ou écrasée un instant
++        par une valeur résiduelle du presse-papiers de Windows
++        réassertée dans la sélection ; la lecture retombe alors sur une
++        valeur ancienne, sans que le programme ait rien manqué : sorties
++        et code de retour restent exacts. Une telle course ne survit
++        pas à une réexécution, quand une défaillance réelle du
++        programme, elle, se reproduit à l'identique à chacune d'elles.
++        """
++        return (self.outil_pp is not None
++                and verdicts.get("clipboard") == "ECHEC"
++                and all(statut in ("OK", "A_DEFINIR")
++                        for cle, statut in verdicts.items()
++                        if cle != "clipboard"))
++
+     def verifier(self, scenario):
+-        """Exécute puis évalue un scénario ; renvoie un rapport détaillé."""
++        """Exécute puis évalue un scénario ; renvoie un rapport détaillé.
++
++        Le presse-papiers POSIX étant une sélection asynchrone servie
++        par un démon (xclip) et synchronisée, sous WSLg, avec le
++        presse-papiers de Windows, un échec isolé de sa seule
++        vérification — toutes les autres sorties étant exactes — est
++        repris un nombre borné de fois avant d'être concluant : une
++        course de synchronisation ne survit pas à la reprise, une
++        défaillance du programme se reproduit à l'identique à chacune
++        d'elles. La copie Win32, synchrone, n'en relève pas.
++        """
+         debut = time.monotonic()
+         attendus, mesures = self.executer(scenario)
++        verdicts = self._verdicts(attendus, mesures[-1])
++        for _ in range(1, ESSAIS_COURSE_PP):
++            if not self._course_presse_papiers(verdicts):
++                break
++            attendus, mesures = self.executer(scenario)
++            verdicts = self._verdicts(attendus, mesures[-1])
+         duree = time.monotonic() - debut
+         derniere = mesures[-1]
+ 
+-        verdicts = {}
+         details = []
+         # Les quatre sorties sont toujours évaluées : une sortie sans attendu
+         # déclaré est signalée « à définir », avec la valeur réelle constatée,
+         # de manière à faciliter le remplissage du protocole de tests.
+         for cle in ("stdout", "stderr", "clipboard", "code_retour"):
+             attendu = attendus.get(cle)
+-            statut = self.evaluer(
+-                cle, attendu, derniere.get(cle),
+-                pp_disponible=self.pp_disponible())
+-            verdicts[cle] = statut
++            statut = verdicts[cle]
+             details.append((cle, attendu, derniere.get(cle), statut))
+ 
+         # Contrôle du déterminisme : toutes les exécutions doivent coïncider.

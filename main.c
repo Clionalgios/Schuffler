@@ -65,6 +65,12 @@
  *    absence de chaîne : en mode API l'appel est rejeté de même, sous
  *    « Erreur : clé transformable passée non-utilisable » ; en mode
  *    clipboard seul, la saisie invisible est proposée.
+ *    Divergence d'agrégation : les options de jeu de caractères
+ *    (--exclude-chars, --special-set) sont répétables — les valeurs
+ *    successives sont agglomérées en un seul jeu, dont les caractères
+ *    en double sont éliminés (auparavant, seule la dernière valeur
+ *    était retenue) ; l'option -l/--length, elle, retient la dernière
+ *    valeur valide passée.
  *
  *  SOMMAIRE
  *     1. En-têtes et options de compilation
@@ -236,6 +242,32 @@ static char *xstrdup(const char *s)
     return p;
 }
 
+/* --------------------------------------------------------------------------
+ * dedupe_chars — copie de « s » sans caractères en double
+ * La première occurrence de chaque caractère est conservée, l'ordre
+ * d'apparition est préservé. Sert aux options répétables de jeu de
+ * caractères (--exclude-chars, --special-set) : les valeurs passées
+ * successivement sont agglomérées, puis l'ensemble obtenu traverse
+ * cette fonction afin qu'aucun caractère n'y figure deux fois.
+ * -------------------------------------------------------------------------- */
+static char *dedupe_chars(const char *s)
+{
+    size_t n = strlen(s);
+    unsigned char seen[256] = { 0 };
+    char *out = xmalloc(n + 1);
+    size_t k = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (!seen[c]) {
+            seen[c] = 1;
+            out[k++] = s[i];
+        }
+    }
+    out[k] = '\0';
+    return out;
+}
+
 /* ==========================================================================
  *  4. CYCLE DE VIE : NETTOYAGE ET INTERRUPTION
  * ========================================================================== */
@@ -387,11 +419,15 @@ static void show_help(FILE *stream)
           "\n"
           "  --special-set \"<chars>\"\n"
           "        Forcer le jeu de caractères spéciaux\n"
-          "        (ex: '@#$%')\n"
+          "        (ex: '@#$%'). Option répétable : les jeux passés\n"
+          "        successivement sont agglomérés, les caractères en\n"
+          "        double éliminés.\n"
           "\n"
           "  --exclude-chars \"<chars>\"\n"
           "        Exclure explicitement certains caractères\n"
-          "        (appliqué après tous les jeux)\n"
+          "        (appliqué après tous les jeux). Option répétable :\n"
+          "        les listes passées successivement sont agglomérées,\n"
+          "        les caractères en double éliminés.\n"
           "\n"
           "  -h, --help\n"
           "        Afficher cette aide et quitter\n"
@@ -434,6 +470,13 @@ static void show_help(FILE *stream)
  *    - « -- » s'arrête ET ignore le reste (quirk du script original) ;
  *    - toute chaîne commençant par « - » est une option : inconnue -> erreur ;
  *    - seul le premier argument positionnel est retenu (le secret).
+ *    Options répétées : --exclude-chars et --special-set sont
+ *    répétables ; les valeurs passées successivement sont agglomérées
+ *    en un seul jeu, dont les caractères en double sont éliminés —
+ *    première occurrence conservée, ordre d'apparition préservé
+ *    (« --exclude-chars a --exclude-chars e » équivaut à
+ *    « --exclude-chars ae »). L'option -l/--length, elle, retient la
+ *    dernière valeur valide passée.
  *    Divergence pour -l/--length : la valeur n'est jamais interprétée
  *    dans un système de numération suggéré par son écriture — ni octal
  *    pour un zéro initial, ni hexadécimal (« 0x »), ni binaire
@@ -501,6 +544,33 @@ static int parse_length(const char *s, unsigned long long *out)
 }
 
 /* --------------------------------------------------------------------------
+ * aggregate_charset — agglomère « val » au jeu de caractères « *dest »
+ * Les options de jeu de caractères (--exclude-chars, --special-set)
+ * sont répétables : chaque passage complète les précédents au lieu de
+ * les remplacer ; l'ensemble aggloméré traverse ensuite dedupe_chars
+ * afin qu'aucun caractère n'y figure deux fois — la première occurrence
+ * l'emporte et l'ordre d'apparition est préservé.
+ * -------------------------------------------------------------------------- */
+static void aggregate_charset(char **dest, const char *val)
+{
+    size_t old_len = strlen(*dest);
+    size_t val_len = strlen(val);
+    char *grown = realloc(*dest, old_len + val_len + 1);
+    char *dedup;
+
+    if (grown == NULL) {
+        fprintf(stderr, "Memoire insuffisante\n");
+        exit(1);
+    }
+    memcpy(grown + old_len, val, val_len + 1);
+    *dest = grown;
+
+    dedup = dedupe_chars(*dest);
+    free(*dest);
+    *dest = dedup;
+}
+
+/* --------------------------------------------------------------------------
  * parse_arguments — parcours de argv
  * Écrit dans cfg et secret_arg. Arrêt (exit) en cas d'option invalide.
  * -------------------------------------------------------------------------- */
@@ -550,8 +620,7 @@ static void parse_arguments(int argc, char **argv)
                 fputs("Liste de caractères à exclure manquante\n", stderr);
                 exit(1);
             }
-            free(cfg.excluded_chars);
-            cfg.excluded_chars = xstrdup(val);
+            aggregate_charset(&cfg.excluded_chars, val);
             i++;
         }
         else if (strcmp(arg, "--special-set") == 0) {
@@ -560,8 +629,7 @@ static void parse_arguments(int argc, char **argv)
                 fputs("Jeu de caractères spéciaux manquant\n", stderr);
                 exit(1);
             }
-            free(cfg.custom_special_set);
-            cfg.custom_special_set = xstrdup(val);
+            aggregate_charset(&cfg.custom_special_set, val);
             i++;
         }
         else if (strcmp(arg, "--") == 0) {
