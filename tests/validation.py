@@ -93,13 +93,13 @@ Exécution résiliente :
       à effectuer.
 
 Utilisation :
-    python3 schuffler_tests.py --prog ./schuffler
-    python3 schuffler_tests.py --prog ./schuffler --categorie "Mode API"
-    python3 schuffler_tests.py --prog ./schuffler --enregistrer reel.json
-    python3 schuffler_tests.py --prog ./schuffler --attendus attendus.json
-    python3 schuffler_tests.py --prog ./schuffler --identifiant api-test
-    python3 schuffler_tests.py --prog ./schuffler --couleur toujours
-    python schuffler_tests.py --prog ./Schuffler.exe         (Windows)
+    python3 ./tests/validation.py --prog ./bin/schuffler
+    python3 ./tests/validation.py --prog ./bin/schuffler --categorie "Mode API"
+    python3 ./tests/validation.py --prog ./bin/schuffler --enregistrer reel.json
+    python3 ./tests/validation.py --prog ./bin/schuffler --attendus attendus.json
+    python3 ./tests/validation.py --prog ./bin/schuffler --identifiant api-test
+    python3 ./tests/validation.py --prog ./bin/schuffler --couleur toujours
+    python ./tests/validation.py --prog ./bin/schuffler.exe         (Windows)
 """
 
 from __future__ import annotations
@@ -1334,7 +1334,7 @@ def main(argv=None):
             "application Win32 valide »). Compilez une version native : "
             "cl /O2 /Fe:Schuffler.exe main.c (invite de commandes "
             "Visual Studio) ou gcc -O2 -Wall -Wextra -o Schuffler.exe "
-            "main.c (MinGW), puis relancez avec --prog ./Schuffler.exe"),
+            "main.c (MinGW), puis relancez avec --prog ./bin/schuffler.exe"),
             flush=True)
 
     attendus_externes = {}
