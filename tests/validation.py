@@ -7,7 +7,7 @@ Objectif :
     Jouer de manière reproductible les scénarios du protocole de tests
     (schema_tests.md) et vérifier que chaque version du programme produit la
     sortie attendue. Les scénarios ci-dessous reprennent, ligne à ligne, les
-    dix catégories du protocole ; les attendus déjà consignés y sont codés,
+    catégories du protocole ; les attendus déjà consignés y sont codés,
     les autres restent des placeholders (None) : le scénario est exécuté et
     la sortie réelle est mesurée et journalée, mais aucune vérification
     d'égalité n'est opérée et aucun échec n'est déclenché. Une fois la valeur
@@ -214,6 +214,12 @@ CATEGORIES = {
     "Aide et erreurs":
         "-h affiche l'aide et quitte ; une option inconnue doit être "
         "signalée sans produire de transformation.",
+    "Effacement":
+        "En mode clipboard, le presse-papiers est effacé automatiquement "
+        "après la fin de l'exécution. L'option -e/--erase-after (délai en "
+        "secondes, minimum 1) y est obligatoire et refusée hors de ce "
+        "mode ; le délai accordé est affiché sur la sortie standard avant "
+        "l'attente.",
 }
 
 
@@ -471,6 +477,12 @@ ERREUR_JEU_MANQUANT = PREFIX_CONTIENT + "Jeu de caractères spéciaux manquant"
 ERREUR_LISTE_MANQUANTE = PREFIX_CONTIENT + \
     "Liste de caractères à exclure manquante"
 ERREUR_OPTION_INCONNUE = PREFIX_CONTIENT + "Option inconnue"
+ERREUR_DELAI_INVALIDE = PREFIX_CONTIENT + "Délai d'effacement invalide"
+ERREUR_DELAI_MANQUANT = PREFIX_CONTIENT + \
+    "Erreur : délai d'effacement du presse-papiers manquant"
+ERREUR_EFFACEMENT_HORS_CLIPBOARD = PREFIX_CONTIENT + \
+    "Erreur : l'effacement automatique du presse-papiers n'est disponible " \
+    "qu'en mode clipboard"
 AIDE = PREFIX_CONTIENT + "Usage:"
 
 SCENARIOS = [
@@ -510,21 +522,29 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_CLE_NON_UTILISABLE, clipboard="", code_retour=1),
 
     # -- Catégorie 3 : Mode Clipboard ---------------------------------------
-    S("cb-test", "Mode Clipboard", ["-C", "test"],
-      stdout="0", clipboard="bafTBVD2lM%ZqIIOAHN6", code_retour=0),
-    S("cb-monsecret", "Mode Clipboard", ["-C", "monsecret"],
-      stdout="0", clipboard="Ya+mBqP2Lm%aGUN^i1@s", code_retour=0),
-    S("cb-vide", "Mode Clipboard", ["-C"], secret_stdin="",
+    # -- Catégorie 3 : Mode Clipboard ---------------------------------------
+    # L'option -e/--erase-after est obligatoire en mode clipboard : chaque
+    # scénario passe un délai d'une seconde. Le presse-papiers est effacé
+    # par le programme avant sa fin : l'attendu clipboard est vide.
+    S("cb-test", "Mode Clipboard", ["-C", "-e", "1", "test"],
+      stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    S("cb-monsecret", "Mode Clipboard", ["-C", "-e", "1", "monsecret"],
+      stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    S("cb-vide", "Mode Clipboard", ["-C", "-e", "1"], secret_stdin="",
       stdout="", stderr=ERREUR_SECRET_VIDE, clipboard="", code_retour=1),
 
     # -- Catégorie 4 : Mode combiné -----------------------------------------
-    S("ac-test", "Mode combiné", ["-A", "-C", "test"],
-      stdout="bafTBVD2lM%ZqIIOAHN6",
-      clipboard="bafTBVD2lM%ZqIIOAHN6", code_retour=0),
-    S("ac-l50", "Mode combiné", ["-A", "-C", "-l", "50", "monsecret"],
-      stdout="Y$2Wtwi1@YPClUN^jCkO%aGaKjA2LmY@fmBqPt#vga+m%uNaSs",
-      clipboard="Y$2Wtwi1@YPClUN^jCkO%aGaKjA2LmY@fmBqPt#vga+m%uNaSs",
-      code_retour=0),
+    S("ac-test", "Mode combiné", ["-A", "-C", "-e", "1", "test"],
+      stdout="bafTBVD2lM%ZqIIOAHN6\n"
+             "Le presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    S("ac-l50", "Mode combiné",
+      ["-A", "-C", "-e", "1", "-l", "50", "monsecret"],
+      stdout="Y$2Wtwi1@YPClUN^jCkO%aGaKjA2LmY@fmBqPt#vga+m%uNaSs\n"
+             "Le presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
 
     # -- Catégorie 5 : Déterminisme ------------------------------------------
     S("det-api", "Déterminisme", ["-A", "test"], executions=2,
@@ -628,8 +648,9 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_SANS_MODE, clipboard="", code_retour=1),
     S("art-l4", "Artefact", ["-A", "-a", "-l", "4", "test"],
       stdout="Ba%2\nB2", clipboard="", code_retour=0),
-    S("art-cb", "Artefact", ["test", "-a", "-C"],
-      stdout="b6", clipboard="bafTBVD2lM%ZqIIOAHN6", code_retour=0),
+    S("art-cb", "Artefact", ["test", "-a", "-C", "-e", "1"],
+      stdout="b6\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
 
     # -- Catégorie 10 : Aide et erreurs d'appel -------------------------------
     S("aide-courte", "Aide et erreurs", ["-h"],
@@ -644,6 +665,53 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_JEU_MANQUANT, code_retour=1),
     S("exclude-sans-valeur", "Aide et erreurs", ["-A", "--exclude-chars"],
       stdout="", stderr=ERREUR_LISTE_MANQUANTE, code_retour=1),
+
+    # -- Catégorie 13 : Effacement automatique du presse-papiers -----------
+    # Le délai passé aux scénarios de succès est maintenu à une ou deux
+    # secondes : le programme vit le temps du délai, le délai maximal par
+    # exécution du cadre (TIMEOUT_PAR_DEFAUT) devant rester largement
+    # au-dessus ; un scénario en valeur plus grande (ex. -e 010, valant 10)
+    # dépasserait ce budget et n'est donc pas codé en l'état.
+    S("eff-cb", "Effacement", ["-C", "-e", "1", "test"],
+      stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    S("eff-cb-longue", "Effacement", ["-C", "--erase-after", "1", "test"],
+      stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    S("eff-pluriel", "Effacement", ["-C", "-e", "2", "test"],
+      stdout="0\nLe presse-papiers sera effacé dans 2 secondes",
+      clipboard="", code_retour=0),
+    S("eff-ac", "Effacement", ["-A", "-C", "-e", "1", "test"],
+      stdout="bafTBVD2lM%ZqIIOAHN6\n"
+             "Le presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    # Un zéro initial est retiré, la valeur est lue en décimal : 001 vaut 1.
+    S("eff-001", "Effacement", ["-C", "-e", "001", "test"],
+      stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    # Option répétée : la dernière valeur valide l'emporte, à l'identique
+    # de -l/--length.
+    S("eff-repete", "Effacement",
+      ["-C", "-e", "5", "-e", "1", "test"],
+      stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
+      clipboard="", code_retour=0),
+    # Paramètre obligatoire : tout oubli termine l'appel avant toute
+    # lecture (l'entrée standard n'est pas consommée ; secret_stdin est
+    # fourni sur eff-oubli-scanf pour le prouver).
+    S("eff-oubli", "Effacement", ["-C", "test"],
+      stdout="", stderr=ERREUR_DELAI_MANQUANT, clipboard="", code_retour=1),
+    S("eff-oubli-scanf", "Effacement", ["-C"], secret_stdin="test",
+      stdout="", stderr=ERREUR_DELAI_MANQUANT, clipboard="", code_retour=1),
+    # Fonctionnalité propre au mode clipboard : refusée partout ailleurs.
+    S("eff-hors-cb", "Effacement", ["-A", "-e", "5", "test"],
+      stdout="", stderr=ERREUR_EFFACEMENT_HORS_CLIPBOARD, clipboard="",
+      code_retour=1),
+    S("eff-zero", "Effacement", ["-C", "-e", "0", "test"],
+      stdout="", stderr=ERREUR_DELAI_INVALIDE, clipboard="", code_retour=1),
+    S("eff-non-num", "Effacement", ["-C", "-e", "abc"],
+      stdout="", stderr=ERREUR_DELAI_INVALIDE, clipboard="", code_retour=1),
+    S("eff-sans-valeur", "Effacement", ["-C", "-e"],
+      stdout="", stderr=ERREUR_DELAI_INVALIDE, clipboard="", code_retour=1),
 ]
 
 

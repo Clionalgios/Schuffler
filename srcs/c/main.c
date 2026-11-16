@@ -1,6 +1,6 @@
 /* ==========================================================================
  *  SCHUFFLER
- *  Générateur de mot de passe déterministe — portage C de schuffler.sh
+ *  Générateur de mot de passe déterministe — portage C de schuffler
  * ==========================================================================
  *
  *  PRINCIPE
@@ -23,6 +23,9 @@
  *       dernier caractère) : en complément de la chaîne en clair en mode
  *       API — toujours renvoyée —, à la place du « 0 » en mode clipboard
  *       seul ; le presse-papiers reçoit toujours la chaîne complète.
+ *    7. Effacement automatique (mode clipboard) : le délai accordé —
+ *       obligatoire, option -e/--erase-after — est affiché sur la sortie
+ *       standard ; après l'attente, le presse-papiers est vidé.
  *
  *  COMPILATION
  *    Linux   : cc -O2 -Wall -Wextra -o schuffler main.c
@@ -83,7 +86,7 @@
  *     8. Saisie du secret
  *     9. SHA-256
  *    10. Génération du mot de passe
- *    11. Sortie : modes API et presse-papiers
+ *    11. Sortie : modes API et presse-papiers, effacement automatique
  *    12. Point d'entrée
  * ========================================================================== */
 
@@ -139,6 +142,8 @@ typedef struct {
     int mode_api;                      /* MODE_API      — option -A : sortie standard */
     int mode_clipboard;                /* MODE_CLIPBOARD — option -C : presse-papiers  */
     int show_artefact;                 /* ARTEFACT      — option -a : artefact en complément du clair */
+    int erase_clipboard;               /* ERASE_CLIPBOARD — option -e : effacement après exécution */
+    unsigned long long erase_delay;    /* ERASE_DELAY    — délai en secondes, minimum 1 */
     char *lower;                       /* LOWER         — minuscules (filtré) */
     char *upper;                       /* UPPER         — majuscules (filtré) */
     char *digits;                       /* DIGITS        — chiffres (filtré)   */
@@ -164,6 +169,7 @@ static Config cfg = {
     20,               /* OUTPUT_LENGTH */
     1, 1, 1, 1,       /* USE_LOWER, USE_UPPER, USE_DIGITS, USE_SPECIAL */
     0, 0, 0,          /* MODE_API, MODE_CLIPBOARD, ARTEFACT (résolu à l'analyse) */
+    0, 0,             /* ERASE_CLIPBOARD, ERASE_DELAY (résolus à l'analyse) */
     NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
@@ -189,7 +195,7 @@ static const char CHARSET_SPECIAL[]       = "!@$%^&*+#";
 
 /* --------------------------------------------------------------------------
  * init_charsets — initialisation de la configuration
- * Équivalent bash : affectations globales en tête de schuffler.sh.
+ * Équivalent bash : affectations globales en tête de schuffler.
  * -------------------------------------------------------------------------- */
 static char *xstrdup(const char *s); /* définie en section 3 */
 
@@ -383,7 +389,7 @@ static void init_signals(void)
 static void show_help(FILE *stream)
 {
     fputs("Usage:\n"
-          "  schuffler.sh [options] [secret]\n"
+          "  schuffler [options] [secret]\n"
           "\n"
           "Description:\n"
           "  Générateur de mot de passe déterministe.\n"
@@ -391,7 +397,8 @@ static void show_help(FILE *stream)
           "\n"
           "Modes:\n"
           "  -C: --clipboard\n"
-          "        Mode clipboard. Envoie la chaîne transformée dans le presse-papier.\n"
+          "        Mode clipboard. Envoie la chaîne transformée dans le presse-papier,\n"
+          "        puis l'efface automatiquement après le délai de l'option -e.\n"
           "  -A: --API\n"
           "        Mode ligne de commande. Renvoie directement la chaîne de caractères transformée.\n"
           "\n"
@@ -439,6 +446,14 @@ static void show_help(FILE *stream)
           "        En mode clipboard, l'artefact remplace le « 0 » affiché en sortie\n"
           "        standard. Le presse-papiers reçoit toujours la chaîne complète.\n"
           "\n"
+          "  -e, --erase-after N\n"
+          "        Délai, en secondes, avant l'effacement automatique du presse-papiers\n"
+          "        après l'affichage du résultat. Obligatoire en mode clipboard (-C),\n"
+          "        refusé hors de ce mode. Le délai accordé est affiché sur la sortie\n"
+          "        standard avant l'attente, puis le presse-papiers est vidé. Minimum 1 ;\n"
+          "        lecture décimale stricte à l'identique de -l : un zéro initial est\n"
+          "        retiré, toute lettre refuse la commande.\n"
+          "\n"
           "Entrée:\n"
           "  secret\n"
           "        Secret fourni en argument.\n"
@@ -450,12 +465,12 @@ static void show_help(FILE *stream)
           "        seul, la saisie invisible est proposée.\n"
           "\n"
           "Exemples:\n"
-          "  schuffler.sh -A monsecret\n"
-          "  schuffler.sh -C monsecret\n"
-          "  schuffler.sh -A --length 32 --no-special monsecret\n"
-          "  schuffler.sh -C --special-set '@#%' --exclude-chars '#' monsecret\n"
-          "  schuffler.sh -A -C monsecret\n"
-          "  schuffler.sh -C -a monsecret\n",
+          "  schuffler -A monsecret\n"
+          "  schuffler -C -e 15 monsecret\n"
+          "  schuffler -A --length 32 --no-special monsecret\n"
+          "  schuffler -C --special-set '@#%' --exclude-chars '#' -e 30 monsecret\n"
+          "  schuffler -A -C -e 15 monsecret\n"
+          "  schuffler -C -a -e 15 monsecret\n",
           stream);
 }
 
@@ -464,9 +479,10 @@ static void show_help(FILE *stream)
  * --------------------------------------------------------------------------
  *  Équivalent bash : parse_arguments.
  *  Sémantique conservée :
- *    - les options -l/--length, --exclude-chars et --special-set consomment
- *      l'argument suivant ; s'il manque ou est vide : erreur (sauf -l qui
- *      affiche « Longueur invalide ») ;
+ *    - les options -l/--length, -e/--erase-after, --exclude-chars et
+ *      --special-set consomment l'argument suivant ; s'il manque ou est
+ *      invalide : « Longueur invalide » pour -l, « Délai d'effacement
+ *      invalide » pour -e, erreur propre sinon ;
  *    - « -- » s'arrête ET ignore le reste (quirk du script original) ;
  *    - toute chaîne commençant par « - » est une option : inconnue -> erreur ;
  *    - seul le premier argument positionnel est retenu (le secret).
@@ -497,6 +513,14 @@ static void show_help(FILE *stream)
  *  dernier caractère) en complément de la chaîne en clair en mode API,
  *  et à la place du « 0 » en mode clipboard seul ; le presse-papiers
  *  reçoit toujours la chaîne complète (voir section 11).
+ *
+ *  Effacement automatique : -e / --erase-after borne la vie du secret dans
+ *  le presse-papiers (mode clipboard uniquement). L'option y est
+ *  obligatoire — tout oubli termine l'appel avant la lecture du secret,
+ *  comme l'absence de mode — et elle est refusée hors de ce mode. La
+ *  valeur suit la sémantique d'analyse de -l (décimal strict, zéro
+ *  initial retiré, minimum 1) ; une option répétée retient la dernière
+ *  valeur valide passée.
  *
  *  Divergence de flux : les messages d'erreur de l'analyse sont écrits sur
  *  la sortie d'erreur (le script bash les affiche sur la sortie standard),
@@ -538,6 +562,45 @@ static int parse_length(const char *s, unsigned long long *out)
     if (errno == ERANGE) /* valeur hors bornes -> erreur -> invalide */
         return 0;
     if (v < 4)
+        return 0;
+    *out = v;
+    return 1;
+}
+
+/* --------------------------------------------------------------------------
+ * parse_erase_delay — validation d'un délai d'effacement (secondes)
+ *
+ * Même sémantique d'analyse que parse_length, au minimum près (1 et
+ * non 4) : une valeur contenant une lettre refuse la commande ; un
+ * zéro initial ne désigne pas l'octal, il est retiré et la valeur est
+ * lue comme expression décimale ('-e 007' vaut 7) ; une valeur hors
+ * bornes est refusée. Un délai nul est refusé : l'effacement accorde un
+ * délai à l'utilisateur, il ne suit pas l'affichage immédiatement.
+ *
+ * Retour : 1 si valide (valeur stockée dans *out), 0 sinon.
+ * -------------------------------------------------------------------------- */
+static int parse_erase_delay(const char *s, unsigned long long *out)
+{
+    const char *p;
+
+    if (*s == '\0')
+        return 0;
+    for (p = s; *p != '\0'; p++) {
+        if (*p < '0' || *p > '9') /* toute lettre -> refus de la commande */
+            return 0;
+    }
+
+    /* Un zéro initial ne désigne pas l'octal : il est retiré et la
+     * valeur est lue comme expression décimale. */
+    p = s;
+    while (p[0] == '0' && p[1] != '\0')
+        p++;
+
+    errno = 0;
+    unsigned long long v = strtoull(p, NULL, 10);
+    if (errno == ERANGE) /* valeur hors bornes -> erreur -> invalide */
+        return 0;
+    if (v < 1)
         return 0;
     *out = v;
     return 1;
@@ -593,6 +656,16 @@ static void parse_arguments(int argc, char **argv)
         }
         else if (strcmp(arg, "-a") == 0 || strcmp(arg, "--artefact") == 0) {
             cfg.show_artefact = 1;
+        }
+        else if (strcmp(arg, "-e") == 0
+                 || strcmp(arg, "--erase-after") == 0) {
+            const char *val = (i + 1 < argc) ? argv[i + 1] : "";
+            if (!parse_erase_delay(val, &cfg.erase_delay)) {
+                fputs("Délai d'effacement invalide\n", stderr);
+                exit(1);
+            }
+            cfg.erase_clipboard = 1;
+            i++;
         }
         else if (strcmp(arg, "-l") == 0 || strcmp(arg, "--length") == 0) {
             const char *val = (i + 1 < argc) ? argv[i + 1] : "";
@@ -667,6 +740,33 @@ static void parse_arguments(int argc, char **argv)
         fprintf(stderr,
                 "Erreur : aucun mode de fonctionnement indiqué "
                 "(-A/--API ou -C/--clipboard requis).\n"
+                "\n");
+        show_help(stderr);
+        exit(1);
+    }
+
+    /* Sécurité d'appel : l'effacement automatique du presse-papiers n'est
+     * disponible qu'en mode clipboard. Passée hors de ce mode, l'option
+     * -e est refusée : l'appel est terminé avant toute transformation,
+     * avec message d'erreur puis aide, tous deux sur la sortie d'erreur. */
+    if (cfg.erase_clipboard && !cfg.mode_clipboard) {
+        fprintf(stderr,
+                "Erreur : l'effacement automatique du presse-papiers "
+                "n'est disponible qu'en mode clipboard "
+                "(-C/--clipboard requis).\n"
+                "\n");
+        show_help(stderr);
+        exit(1);
+    }
+
+    /* Sécurité d'appel : en mode clipboard, le délai d'effacement est
+     * obligatoire. Tout oubli termine l'appel avant toute lecture, à
+     * l'identique de l'absence de mode : message d'erreur puis aide sur
+     * la sortie d'erreur, code de retour 1. */
+    if (cfg.mode_clipboard && !cfg.erase_clipboard) {
+        fprintf(stderr,
+                "Erreur : délai d'effacement du presse-papiers manquant "
+                "(-e/--erase-after obligatoire en mode clipboard).\n"
                 "\n");
         show_help(stderr);
         exit(1);
@@ -1266,6 +1366,14 @@ static void shuffle_result(void)
  *    - Linux et autres POSIX : outils en ligne de commande essayés dans
  *      l'ordre — xclip (équivalence avec le script bash), xsel (X11),
  *      wl-copy (Wayland), pbcopy (macOS) — le premier qui réussit l'emporte.
+ *
+ *  Effacement automatique (option -e/--erase-after, mode clipboard
+ *  uniquement, obligatoire) : après l'affichage du résultat, le délai
+ *  accordé est annoncé sur la sortie standard, l'attente s'écoule, puis
+ *  le presse-papiers est vidé — EmptyClipboard sous Windows, les mêmes
+ *  outils POSIX que la copie recevant une chaîne vide, dans le même
+ *  ordre. Une interruption (Ctrl-C) durant l'attente interrompt le
+ *  programme (code 1) sans effacer le presse-papiers.
  * ========================================================================== */
 
 #if defined(_WIN32)
@@ -1301,16 +1409,18 @@ static int copy_to_clipboard_impl(void)
 }
 #else
 /* --------------------------------------------------------------------------
- * clipboard_write_pipe — écrit la chaîne finale dans la commande indiquée
+ * clipboard_write_pipe — écrit la donnée indiquée dans la commande donnée
+ * Sert la copie (la chaîne finale) et l'effacement (chaîne vide) ; dans
+ * les deux cas, le premier outil qui réussit l'emporte.
  * Retour : 1 si la commande a réussi (code de sortie nul), 0 sinon.
  * -------------------------------------------------------------------------- */
-static int clipboard_write_pipe(const char *command)
+static int clipboard_write_pipe(const char *command, const char *data)
 {
     FILE *pp = popen(command, "w");
 
     if (pp == NULL)
         return 0;
-    fputs(ws.final, pp);
+    fputs(data, pp);
     return pclose(pp) == 0;
 }
 
@@ -1332,7 +1442,49 @@ static int copy_to_clipboard_impl(void)
     };
 
     for (size_t i = 0; tools[i] != NULL; i++) {
-        if (clipboard_write_pipe(tools[i]))
+        if (clipboard_write_pipe(tools[i], ws.final))
+            return 1;
+    }
+    return 0;
+}
+#endif
+
+#if defined(_WIN32)
+/* --------------------------------------------------------------------------
+ * clear_clipboard_impl — effacement natif Win32 (EmptyClipboard)
+ * Miroir de la copie : ouverture, vidage, fermeture ; l'échec éventuel
+ * est signalé par l'appelant sur la sortie d'erreur, jamais ailleurs.
+ * -------------------------------------------------------------------------- */
+static int clear_clipboard_impl(void)
+{
+    int ok = 0;
+
+    if (OpenClipboard(NULL)) {
+        ok = (EmptyClipboard() != 0);
+        CloseClipboard();
+    }
+    return ok;
+}
+#else
+/* --------------------------------------------------------------------------
+ * clear_clipboard_impl — essai ordonné des outils presse-papiers POSIX
+ * Les mêmes outils, dans le même ordre que la copie, reçoivent une
+ * chaîne vide : le premier qui réussit l'emporte et le presse-papiers
+ * est vidé. Un outil absent ou sans serveur accessible échoue
+ * silencieusement et laisse place au suivant.
+ * -------------------------------------------------------------------------- */
+static int clear_clipboard_impl(void)
+{
+    static const char *const tools[] = {
+        "xclip -selection clipboard",
+        "xsel --clipboard --input",
+        "wl-copy",
+        "pbcopy",
+        NULL
+    };
+
+    for (size_t i = 0; tools[i] != NULL; i++) {
+        if (clipboard_write_pipe(tools[i], ""))
             return 1;
     }
     return 0;
@@ -1404,6 +1556,45 @@ static void output_result(void)
         copy_to_clipboard();
 }
 
+/* --------------------------------------------------------------------------
+ * erase_clipboard_after_delay — annonce le délai, attend, puis efface
+ * Le délai accordé à l'utilisateur est affiché sur la sortie standard, à
+ * la suite du « 0 » (ou de l'artefact) du mode clipboard seul et de la
+ * chaîne transformée (puis de l'artefact) en modes combinés, avant
+ * l'attente : l'utilisateur sait combien de temps il dispose pour
+ * coller la chaîne. L'attente est interrompue par SIGINT / Ctrl-C
+ * (handle_interrupt : sortie de code 1, presse-papiers non effacé). Un
+ * échec d'effacement est signalé sur la seule sortie d'erreur.
+ * -------------------------------------------------------------------------- */
+static void erase_clipboard_after_delay(void)
+{
+    printf("Le presse-papiers sera effacé dans %llu seconde%s\n",
+           cfg.erase_delay, cfg.erase_delay == 1 ? "" : "s");
+    fflush(stdout); /* l'attente suit : rien ne doit rester en attente */
+
+#if defined(_WIN32)
+    /* Sleep compte en millisecondes (DWORD) : le délai est borné à la
+     * capacité du type, toute valeur plus grande excédant 49 jours. */
+    unsigned long long ms = cfg.erase_delay * 1000ULL;
+    if (ms > 0xFFFFFFFFULL)
+        ms = 0xFFFFFFFFULL;
+    Sleep((DWORD)ms);
+#else
+    /* sleep prend un unsigned int : bornage à sa capacité maximale. */
+    sleep(cfg.erase_delay > 0xFFFFFFFFULL ? 0xFFFFFFFFULL
+                                          : (unsigned int)cfg.erase_delay);
+#endif
+
+    if (!clear_clipboard_impl()) {
+#if defined(_WIN32)
+        fputs("Echec de l'effacement du presse-papiers Win32\n", stderr);
+#else
+        fputs("Effacement du presse-papiers impossible : "
+              "xclip, xsel, wl-copy ou pbcopy requis\n", stderr);
+#endif
+    }
+}
+
 /* ==========================================================================
  *  12. POINT D'ENTRÉE
  * ========================================================================== */
@@ -1412,7 +1603,8 @@ static void output_result(void)
  * main — enchaînement identique à la fonction main du script bash :
  * traps -> parse_arguments -> build_charset -> read_inputs ->
  * generate_base_string -> enforce_character_classes -> shuffle_result ->
- * output_result (API, clipboard ou les deux).
+ * output_result (API, clipboard ou les deux) ->
+ * erase_clipboard_after_delay (mode clipboard : délai puis effacement).
  * -------------------------------------------------------------------------- */
 int main(int argc, char **argv)
 {
@@ -1428,6 +1620,11 @@ int main(int argc, char **argv)
     enforce_character_classes();
     shuffle_result();
     output_result();
+
+    /* Effacement automatique : mode clipboard seul ou combiné ; le délai
+     * a été validé obligatoire à l'analyse (cfg.erase_clipboard posé). */
+    if (cfg.mode_clipboard && cfg.erase_clipboard)
+        erase_clipboard_after_delay();
 
     return 0;
 }
