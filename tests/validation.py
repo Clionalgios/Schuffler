@@ -49,6 +49,11 @@ Presse-papiers :
     suivants : xclip, xsel, wl-paste (Wayland) ou pbpaste (macOS). En
     son absence, la vérification du presse-papiers est marquée
     INDÉTERMINÉE (jamais en échec).
+    La sous-routine d'effacement du programme survit à sa fin : un
+    scénario porteur d'une attente (attribut « attente », en secondes)
+    diffère d'autant la lecture après l'exécution — le presse-papiers
+    n'est vide qu'à l'échéance du délai, sauf lecture anticipée
+    délibérée dans la fenêtre d'attente.
 
 Journal en direct et lisibilité :
     - chaque catégorie est annoncée par son en-tête et son comportement
@@ -70,6 +75,12 @@ Exécution résiliente :
       processus complet qui est supprimé — programme et sous-processus
       éventuels (xclip lancé par popen) — afin qu'aucun processus orphelin
       ne survive et ne bloque de tube ;
+    - la sous-routine d'effacement du programme survit à sa fin par
+      conception (elle vide le presse-papiers à l'échéance du délai) :
+      détachée du groupe de l'exécution — session propre sous POSIX,
+      processus relancé sans console sous Windows — l'extinction du
+      groupe ne l'atteint jamais ; ses canaux étant clos, elle ne
+      maintient aucun tube ouvert ;
     - sous Windows, l'équivalent est assuré par un groupe de processus
       dédié (CREATE_NEW_PROCESS_GROUP) et par la terminaison de l'arbre
       complet via taskkill /F /T ; la copie Win32 ne laissant aucun
@@ -215,11 +226,12 @@ CATEGORIES = {
         "-h affiche l'aide et quitte ; une option inconnue doit être "
         "signalée sans produire de transformation.",
     "Effacement":
-        "En mode clipboard, le presse-papiers est effacé automatiquement "
-        "après la fin de l'exécution. L'option -e/--erase-after (délai en "
+        "En mode clipboard, le programme rend la console à l'émission du "
+        "mot de passe : l'effacement est programmé en sous-routine "
+        "détachée, qui survit à sa fin et vide le presse-papiers à "
+        "l'échéance du délai. L'option -e/--erase-after (délai en "
         "secondes, minimum 1) y est obligatoire et refusée hors de ce "
-        "mode ; le délai accordé est affiché sur la sortie standard avant "
-        "l'attente.",
+        "mode ; le délai accordé est annoncé sur la sortie standard.",
 }
 
 
@@ -454,15 +466,21 @@ class Scenario:
     secret_stdin: Optional[str] = None
     # Nombre d'exécutions ( > 1 : contrôle du déterminisme).
     executions: int = 1
+    # Attente post-exécution, en secondes, avant la lecture du
+    # presse-papiers : la sous-routine d'effacement détachée survit au
+    # programme, le presse-papiers n'est vide qu'à l'échéance du délai ;
+    # une lecture anticipée, délibérée, observe la fenêtre d'attente
+    # (0 : lecture immédiate après l'exécution).
+    attente: float = 0.0
     # Attendus : clés parmi "stdout", "stderr", "clipboard", "code_retour".
     attendus: dict = dataclasses.field(default_factory=dict)
 
 
 def S(identifiant, categorie, arguments, secret_stdin=None,
-      executions=1, **attendus):
+      executions=1, attente=0.0, **attendus):
     """Constructeur concis de scénario ; les attendus sont nommés."""
     return Scenario(identifiant, categorie, arguments, secret_stdin,
-                    executions, attendus)
+                    executions, attente, attendus)
 
 
 ERREUR_SANS_MODE = PREFIX_CONTIENT + "Erreur : aucun mode"
@@ -522,14 +540,18 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_CLE_NON_UTILISABLE, clipboard="", code_retour=1),
 
     # -- Catégorie 3 : Mode Clipboard ---------------------------------------
-    # -- Catégorie 3 : Mode Clipboard ---------------------------------------
-    # L'option -e/--erase-after est obligatoire en mode clipboard : chaque
-    # scénario passe un délai d'une seconde. Le presse-papiers est effacé
-    # par le programme avant sa fin : l'attendu clipboard est vide.
+    # L'option -e/--erase-after est obligatoire en mode clipboard :
+    # chaque scénario passe un délai d'une seconde. Le programme rend la
+    # console à l'émission, l'effacement est porté par une sous-routine
+    # détachée qui survit à sa fin : le cadre attend la fin du délai
+    # (attente post-exécution) avant de lire le presse-papiers, l'attendu
+    # clipboard est vide.
     S("cb-test", "Mode Clipboard", ["-C", "-e", "1", "test"],
+      attente=2,
       stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     S("cb-monsecret", "Mode Clipboard", ["-C", "-e", "1", "monsecret"],
+      attente=2,
       stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     S("cb-vide", "Mode Clipboard", ["-C", "-e", "1"], secret_stdin="",
@@ -537,11 +559,13 @@ SCENARIOS = [
 
     # -- Catégorie 4 : Mode combiné -----------------------------------------
     S("ac-test", "Mode combiné", ["-A", "-C", "-e", "1", "test"],
+      attente=2,
       stdout="bafTBVD2lM%ZqIIOAHN6\n"
              "Le presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     S("ac-l50", "Mode combiné",
       ["-A", "-C", "-e", "1", "-l", "50", "monsecret"],
+      attente=2,
       stdout="Y$2Wtwi1@YPClUN^jCkO%aGaKjA2LmY@fmBqPt#vga+m%uNaSs\n"
              "Le presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
@@ -649,6 +673,7 @@ SCENARIOS = [
     S("art-l4", "Artefact", ["-A", "-a", "-l", "4", "test"],
       stdout="Ba%2\nB2", clipboard="", code_retour=0),
     S("art-cb", "Artefact", ["test", "-a", "-C", "-e", "1"],
+      attente=2,
       stdout="b6\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
 
@@ -667,32 +692,40 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_LISTE_MANQUANTE, code_retour=1),
 
     # -- Catégorie 13 : Effacement automatique du presse-papiers -----------
-    # Le délai passé aux scénarios de succès est maintenu à une ou deux
-    # secondes : le programme vit le temps du délai, le délai maximal par
-    # exécution du cadre (TIMEOUT_PAR_DEFAUT) devant rester largement
-    # au-dessus ; un scénario en valeur plus grande (ex. -e 010, valant 10)
-    # dépasserait ce budget et n'est donc pas codé en l'état.
+    # Le programme rend la console à l'émission : l'effacement est porté
+    # par une sous-routine détachée qui survit à sa fin. Chaque scénario
+    # de succès porte une attente post-exécution (attente) supérieure
+    # d'une seconde à son délai, le temps que la sous-routine agisse ;
+    # les délais restent courts (1 à 2 s) afin de contenir la durée des
+    # épreuves. TIMEOUT_PAR_DEFAUT ne borne plus que la vie du programme
+    # lui-même, désormais immédiate.
     S("eff-cb", "Effacement", ["-C", "-e", "1", "test"],
+      attente=2,
       stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     S("eff-cb-longue", "Effacement", ["-C", "--erase-after", "1", "test"],
+      attente=2,
       stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     S("eff-pluriel", "Effacement", ["-C", "-e", "2", "test"],
+      attente=3,
       stdout="0\nLe presse-papiers sera effacé dans 2 secondes",
       clipboard="", code_retour=0),
     S("eff-ac", "Effacement", ["-A", "-C", "-e", "1", "test"],
+      attente=2,
       stdout="bafTBVD2lM%ZqIIOAHN6\n"
              "Le presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     # Un zéro initial est retiré, la valeur est lue en décimal : 001 vaut 1.
     S("eff-001", "Effacement", ["-C", "-e", "001", "test"],
+      attente=2,
       stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     # Option répétée : la dernière valeur valide l'emporte, à l'identique
     # de -l/--length.
     S("eff-repete", "Effacement",
       ["-C", "-e", "5", "-e", "1", "test"],
+      attente=2,
       stdout="0\nLe presse-papiers sera effacé dans 1 seconde",
       clipboard="", code_retour=0),
     # Paramètre obligatoire : tout oubli termine l'appel avant toute
@@ -712,6 +745,17 @@ SCENARIOS = [
       stdout="", stderr=ERREUR_DELAI_INVALIDE, clipboard="", code_retour=1),
     S("eff-sans-valeur", "Effacement", ["-C", "-e"],
       stdout="", stderr=ERREUR_DELAI_INVALIDE, clipboard="", code_retour=1),
+    # Fenêtre d'attente : le programme rend la console avant l'effacement.
+    # Lu une seconde après sa fin, délai de 5 secondes en jeu, le
+    # presse-papiers doit encore porter la chaîne copiée — la lecture
+    # prouve que le programme n'attend pas en avant-plan, et la copie y
+    # est vérifiée au passage (point 7.1 de l'ébauche). Placé en dernier :
+    # sa sous-routine vit encore 4 secondes après la lecture, sa purge ne
+    # doit rencontrer que le presse-papiers déjà vidé du cadre.
+    S("eff-fenetre", "Effacement", ["-C", "-e", "5", "test"],
+      attente=1,
+      stdout="0\nLe presse-papiers sera effacé dans 5 secondes",
+      clipboard="bafTBVD2lM%ZqIIOAHN6", code_retour=0),
 ]
 
 
@@ -1043,6 +1087,12 @@ class CadreDeTest:
                 tuer_groupe(processus, pgid)
 
         if avec_pp:
+            # La sous-routine d'effacement survit au programme : le
+            # presse-papiers n'est lu qu'après l'attente propre au
+            # scénario — fenêtre d'effacement, ou fenêtre d'attente
+            # pour une lecture anticipée délibérée.
+            if scenario.attente > 0:
+                time.sleep(scenario.attente)
             resultat["clipboard"] = self.lire_presse_papiers()
 
         # Récolte du groupe APRÈS la lecture du presse-papiers : un démon

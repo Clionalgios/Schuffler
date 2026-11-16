@@ -1,6 +1,6 @@
 /* ==========================================================================
  *  SCHUFFLER
- *  Générateur de mot de passe déterministe — portage C de schuffler
+ *  Générateur de mot de passe déterministe — portage C de schuffler.sh
  * ==========================================================================
  *
  *  PRINCIPE
@@ -25,7 +25,8 @@
  *       seul ; le presse-papiers reçoit toujours la chaîne complète.
  *    7. Effacement automatique (mode clipboard) : le délai accordé —
  *       obligatoire, option -e/--erase-after — est affiché sur la sortie
- *       standard ; après l'attente, le presse-papiers est vidé.
+ *       standard ; le programme rend aussitôt la console, l'effacement
+ *       est programmé en sous-routine détachée qui survit à sa fin.
  *
  *  COMPILATION
  *    Linux   : cc -O2 -Wall -Wextra -o schuffler main.c
@@ -86,7 +87,8 @@
  *     8. Saisie du secret
  *     9. SHA-256
  *    10. Génération du mot de passe
- *    11. Sortie : modes API et presse-papiers, effacement automatique
+ *    11. Sortie : modes API et presse-papiers ; effacement automatique
+ *        programmé en sous-routine détachée
  *    12. Point d'entrée
  * ========================================================================== */
 
@@ -144,6 +146,7 @@ typedef struct {
     int show_artefact;                 /* ARTEFACT      — option -a : artefact en complément du clair */
     int erase_clipboard;               /* ERASE_CLIPBOARD — option -e : effacement après exécution */
     unsigned long long erase_delay;    /* ERASE_DELAY    — délai en secondes, minimum 1 */
+    int erase_worker;                  /* ERASE_WORKER   — option interne --erase-worker (relance) */
     char *lower;                       /* LOWER         — minuscules (filtré) */
     char *upper;                       /* UPPER         — majuscules (filtré) */
     char *digits;                       /* DIGITS        — chiffres (filtré)   */
@@ -169,7 +172,7 @@ static Config cfg = {
     20,               /* OUTPUT_LENGTH */
     1, 1, 1, 1,       /* USE_LOWER, USE_UPPER, USE_DIGITS, USE_SPECIAL */
     0, 0, 0,          /* MODE_API, MODE_CLIPBOARD, ARTEFACT (résolu à l'analyse) */
-    0, 0,             /* ERASE_CLIPBOARD, ERASE_DELAY (résolus à l'analyse) */
+    0, 0, 0,          /* ERASE_CLIPBOARD, ERASE_DELAY, ERASE_WORKER (analyse) */
     NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
@@ -195,7 +198,7 @@ static const char CHARSET_SPECIAL[]       = "!@$%^&*+#";
 
 /* --------------------------------------------------------------------------
  * init_charsets — initialisation de la configuration
- * Équivalent bash : affectations globales en tête de schuffler.
+ * Équivalent bash : affectations globales en tête de schuffler.sh.
  * -------------------------------------------------------------------------- */
 static char *xstrdup(const char *s); /* définie en section 3 */
 
@@ -389,7 +392,7 @@ static void init_signals(void)
 static void show_help(FILE *stream)
 {
     fputs("Usage:\n"
-          "  schuffler [options] [secret]\n"
+          "  schuffler.sh [options] [secret]\n"
           "\n"
           "Description:\n"
           "  Générateur de mot de passe déterministe.\n"
@@ -450,7 +453,9 @@ static void show_help(FILE *stream)
           "        Délai, en secondes, avant l'effacement automatique du presse-papiers\n"
           "        après l'affichage du résultat. Obligatoire en mode clipboard (-C),\n"
           "        refusé hors de ce mode. Le délai accordé est affiché sur la sortie\n"
-          "        standard avant l'attente, puis le presse-papiers est vidé. Minimum 1 ;\n"
+          "        standard, puis la console est rendue : le presse-papiers est vidé\n"
+          "        à l'échéance du délai par une sous-routine détachée, qui survit\n"
+          "        à la fin du programme. Minimum 1 ;\n"
           "        lecture décimale stricte à l'identique de -l : un zéro initial est\n"
           "        retiré, toute lettre refuse la commande.\n"
           "\n"
@@ -465,12 +470,12 @@ static void show_help(FILE *stream)
           "        seul, la saisie invisible est proposée.\n"
           "\n"
           "Exemples:\n"
-          "  schuffler -A monsecret\n"
-          "  schuffler -C -e 15 monsecret\n"
-          "  schuffler -A --length 32 --no-special monsecret\n"
-          "  schuffler -C --special-set '@#%' --exclude-chars '#' -e 30 monsecret\n"
-          "  schuffler -A -C -e 15 monsecret\n"
-          "  schuffler -C -a -e 15 monsecret\n",
+          "  schuffler.sh -A monsecret\n"
+          "  schuffler.sh -C -e 15 monsecret\n"
+          "  schuffler.sh -A --length 32 --no-special monsecret\n"
+          "  schuffler.sh -C --special-set '@#%' --exclude-chars '#' -e 30 monsecret\n"
+          "  schuffler.sh -A -C -e 15 monsecret\n"
+          "  schuffler.sh -C -a -e 15 monsecret\n",
           stream);
 }
 
@@ -521,6 +526,11 @@ static void show_help(FILE *stream)
  *  valeur suit la sémantique d'analyse de -l (décimal strict, zéro
  *  initial retiré, minimum 1) ; une option répétée retient la dernière
  *  valeur valide passée.
+ *
+ *  Option interne : --erase-worker N, absente de l'aide, sert la relance
+ *  de la sous-routine d'effacement sous Windows (section 11). Passée,
+ *  elle court-circuite tout le reste de l'analyse : ni mode ni secret ne
+ *  sont exigés, aucune sortie n'est produite.
  *
  *  Divergence de flux : les messages d'erreur de l'analyse sont écrits sur
  *  la sortie d'erreur (le script bash les affiche sur la sortie standard),
@@ -636,7 +646,13 @@ static void aggregate_charset(char **dest, const char *val)
 /* --------------------------------------------------------------------------
  * parse_arguments — parcours de argv
  * Écrit dans cfg et secret_arg. Arrêt (exit) en cas d'option invalide.
+ *
+ * Déclaration anticipée : le court-circuit de l'appel interne (option
+ * --erase-worker, relance de la sous-routine d'effacement sous Windows)
+ * sert la routine définie en section 11, plus bas dans le fichier.
  * -------------------------------------------------------------------------- */
+static void erase_worker_routine(unsigned long long delay);
+
 static void parse_arguments(int argc, char **argv)
 {
     int i = 1;
@@ -665,6 +681,17 @@ static void parse_arguments(int argc, char **argv)
                 exit(1);
             }
             cfg.erase_clipboard = 1;
+            i++;
+        }
+        else if (strcmp(arg, "--erase-worker") == 0) {
+            /* Option interne, absente de l'aide : relance de la sous-
+             * routine d'effacement sous Windows (voir section 11). */
+            const char *val = (i + 1 < argc) ? argv[i + 1] : "";
+            if (!parse_erase_delay(val, &cfg.erase_delay)) {
+                fputs("Délai d'effacement invalide\n", stderr);
+                exit(1);
+            }
+            cfg.erase_worker = 1;
             i++;
         }
         else if (strcmp(arg, "-l") == 0 || strcmp(arg, "--length") == 0) {
@@ -730,6 +757,15 @@ static void parse_arguments(int argc, char **argv)
         }
 
         i++;
+    }
+
+    /* Appel interne (option --erase-worker, absente de l'aide) : la
+     * sous-routine d'effacement relancée sous Windows court-circuite
+     * tout le reste — ni mode ni secret ne sont exigés, aucune sortie
+     * n'est produite — avant même le contrôle d'absence de mode. */
+    if (cfg.erase_worker) {
+        erase_worker_routine(cfg.erase_delay);
+        exit(0);
     }
 
     /* Sécurité d'appel : aucun mode par défaut. Si ni -A ni -C n'ont été
@@ -1369,11 +1405,22 @@ static void shuffle_result(void)
  *
  *  Effacement automatique (option -e/--erase-after, mode clipboard
  *  uniquement, obligatoire) : après l'affichage du résultat, le délai
- *  accordé est annoncé sur la sortie standard, l'attente s'écoule, puis
- *  le presse-papiers est vidé — EmptyClipboard sous Windows, les mêmes
- *  outils POSIX que la copie recevant une chaîne vide, dans le même
- *  ordre. Une interruption (Ctrl-C) durant l'attente interrompt le
- *  programme (code 1) sans effacer le presse-papiers.
+ *  accordé est annoncé sur la sortie standard, puis le programme rend
+ *  aussitôt la console — l'effacement est programmé en sous-routine
+ *  détachée, laquelle survit à sa fin : sous POSIX, processus fils dérivé
+ *  dans sa propre session (fork, setsid) ; sous Windows, relance de
+ *  soi-même par CreateProcess (DETACHED_PROCESS) au moyen de l'option
+ *  interne --erase-worker. La sous-routine attend le délai puis vide le
+ *  presse-papiers — EmptyClipboard sous Windows, les mêmes outils POSIX
+ *  que la copie recevant une chaîne vide, dans le même ordre — sans
+ *  rien écrire nulle part : détachée du terminal et des canaux de
+ *  l'appelant, un échec n'y peut plus être signalé. Une interruption
+ *  (Ctrl-C) après la fin du programme n'a plus de prise sur elle :
+ *  détachée, l'effacement suit son cours. En cas d'échec de la
+ *  programmation, repli en avant-plan : le délai s'écoule dans le
+ *  programme lui-même, la console n'est pas rendue, l'effacement reste
+ *  garanti ; l'échec éventuel de l'effacement y est signalé sur la
+ *  seule sortie d'erreur.
  * ========================================================================== */
 
 #if defined(_WIN32)
@@ -1557,34 +1604,124 @@ static void output_result(void)
 }
 
 /* --------------------------------------------------------------------------
- * erase_clipboard_after_delay — annonce le délai, attend, puis efface
- * Le délai accordé à l'utilisateur est affiché sur la sortie standard, à
- * la suite du « 0 » (ou de l'artefact) du mode clipboard seul et de la
- * chaîne transformée (puis de l'artefact) en modes combinés, avant
- * l'attente : l'utilisateur sait combien de temps il dispose pour
- * coller la chaîne. L'attente est interrompue par SIGINT / Ctrl-C
- * (handle_interrupt : sortie de code 1, presse-papiers non effacé). Un
- * échec d'effacement est signalé sur la seule sortie d'erreur.
+ * wait_erase_delay — attente du délai d'effacement (secondes)
+ * Sleep compte en millisecondes (DWORD) : le délai est borné à la
+ * capacité du type, toute valeur plus grande excédant 49 jours. Sous
+ * POSIX, sleep prend un unsigned int : bornage à sa capacité maximale.
  * -------------------------------------------------------------------------- */
-static void erase_clipboard_after_delay(void)
+static void wait_erase_delay(unsigned long long delay)
 {
-    printf("Le presse-papiers sera effacé dans %llu seconde%s\n",
-           cfg.erase_delay, cfg.erase_delay == 1 ? "" : "s");
-    fflush(stdout); /* l'attente suit : rien ne doit rester en attente */
-
 #if defined(_WIN32)
-    /* Sleep compte en millisecondes (DWORD) : le délai est borné à la
-     * capacité du type, toute valeur plus grande excédant 49 jours. */
-    unsigned long long ms = cfg.erase_delay * 1000ULL;
+    unsigned long long ms = delay * 1000ULL;
     if (ms > 0xFFFFFFFFULL)
         ms = 0xFFFFFFFFULL;
     Sleep((DWORD)ms);
 #else
-    /* sleep prend un unsigned int : bornage à sa capacité maximale. */
-    sleep(cfg.erase_delay > 0xFFFFFFFFULL ? 0xFFFFFFFFULL
-                                          : (unsigned int)cfg.erase_delay);
+    sleep(delay > 0xFFFFFFFFULL ? 0xFFFFFFFFULL : (unsigned int)delay);
+#endif
+}
+
+/* --------------------------------------------------------------------------
+ * erase_worker_routine — routine de la sous-routine d'effacement
+ * Attente du délai puis vidage du presse-papiers, sans rien écrire :
+ * la sous-routine vit hors du programme appelant — nouvelle session
+ * POSIX sans les canaux hérités, processus Windows sans console ni
+ * handles transmis — un échec d'effacement n'y peut plus être signalé.
+ * -------------------------------------------------------------------------- */
+static void erase_worker_routine(unsigned long long delay)
+{
+    wait_erase_delay(delay);
+    (void)clear_clipboard_impl(); /* échec muet : plus de canal de sortie */
+}
+
+#if defined(_WIN32)
+/* --------------------------------------------------------------------------
+ * spawn_erase_worker_win32 — relance de soi-même en sous-routine détachée
+ * fork n'existe pas sous Windows : la sous-routine y est un second
+ * processus, relancé depuis le chemin de l'exécutable (GetModuleFileName)
+ * au moyen de l'option interne --erase-worker. DETACHED_PROCESS : aucune
+ * console n'est héritée ni créée ; aucun handle n'étant transmis, les
+ * canaux de l'appelant ne sont pas tenus ouverts — la sous-routine est
+ * silencieuse par construction. Les poignées sont closes aussitôt :
+ * l'appelant ne l'attend pas, la console lui est rendue.
+ * Retour : 1 si la sous-routine est lancée, 0 sinon (repli en avant-plan).
+ * -------------------------------------------------------------------------- */
+static int spawn_erase_worker_win32(unsigned long long delay)
+{
+    char exe[MAX_PATH];
+    char cmdline[MAX_PATH + 64];
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+
+    if (GetModuleFileNameA(NULL, exe, MAX_PATH) == 0)
+        return 0;
+    if (snprintf(cmdline, sizeof cmdline,
+                 "\"%s\" --erase-worker %llu", exe, delay)
+        >= (int)sizeof cmdline)
+        return 0; /* chemin trop long pour la relance : repli */
+
+    ZeroMemory(&si, sizeof si);
+    si.cb = sizeof si;
+    ZeroMemory(&pi, sizeof pi);
+    if (!CreateProcessA(NULL, cmdline, NULL, NULL, FALSE,
+                        DETACHED_PROCESS, NULL, NULL, &si, &pi))
+        return 0;
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return 1;
+}
 #endif
 
+/* --------------------------------------------------------------------------
+ * schedule_erase_clipboard — annonce, programmation détachée, retour
+ * Le délai accordé à l'utilisateur est affiché sur la sortie standard, à
+ * la suite du « 0 » (ou de l'artefact) du mode clipboard seul et de la
+ * chaîne transformée (puis de l'artefact) en modes combinés : cet avis
+ * est le seul avertissement émis, le programme rend aussitôt la console.
+ * L'attente et l'effacement sont portés par une sous-routine détachée
+ * qui survit à sa fin : sous POSIX, le fils ferme les canaux hérités
+ * (aucun tube de l'appelant n'est tenu ouvert, rien ne fuit vers ses
+ * sorties), dérive dans sa propre session (il survit au terminal et à
+ * la fin du programme), efface les secrets de sa mémoire avant
+ * l'attente, puis termine par _exit — ni le vidage des tampons ni le
+ * nettoyage de l'appelant ne s'y appliquent. En cas d'échec de la
+ * programmation, repli en avant-plan : le délai s'écoule dans le
+ * programme (console non rendue), un échec d'effacement y est signalé
+ * sur la seule sortie d'erreur.
+ * -------------------------------------------------------------------------- */
+static void schedule_erase_clipboard(void)
+{
+    printf("Le presse-papiers sera effacé dans %llu seconde%s\n",
+           cfg.erase_delay, cfg.erase_delay == 1 ? "" : "s");
+    fflush(stdout); /* la console est rendue : rien ne doit rester en attente */
+
+#if defined(_WIN32)
+    if (spawn_erase_worker_win32(cfg.erase_delay))
+        return;
+#else
+    fflush(NULL); /* rien ne doit rester en tampon au fork */
+    pid_t worker = fork();
+    if (worker == 0) {
+        (void)setsid();      /* nouvelle session : survit au terminal    */
+        close(STDIN_FILENO); /* canaux hérités clos : aucun tube de      */
+        close(STDOUT_FILENO);/* l'appelant n'est tenu ouvert, aucun octet*/
+        close(STDERR_FILENO);/* ne fuit vers ses sorties                 */
+        secure_cleanup();    /* les secrets quittent la mémoire avant    */
+                             /* que la sous-routine ne vive son délai     */
+        erase_worker_routine(cfg.erase_delay);
+        _exit(0);
+    }
+    if (worker > 0)
+        return; /* console rendue, effacement programmé */
+    /* fork échoué : repli en avant-plan. */
+#endif
+
+    /* Repli en avant-plan : la programmation détachée a échoué ; la
+     * sécurité prime sur la disponibilité de la console — le délai
+     * s'écoule donc dans le programme, l'avis en est donné. */
+    fputs("Avertissement : effacement en avant-plan "
+          "(sous-routine détachable indisponible).\n", stderr);
+    wait_erase_delay(cfg.erase_delay);
     if (!clear_clipboard_impl()) {
 #if defined(_WIN32)
         fputs("Echec de l'effacement du presse-papiers Win32\n", stderr);
@@ -1604,7 +1741,8 @@ static void erase_clipboard_after_delay(void)
  * traps -> parse_arguments -> build_charset -> read_inputs ->
  * generate_base_string -> enforce_character_classes -> shuffle_result ->
  * output_result (API, clipboard ou les deux) ->
- * erase_clipboard_after_delay (mode clipboard : délai puis effacement).
+ * schedule_erase_clipboard (mode clipboard : effacement programmé en
+ * sous-routine détachée, console rendue aussitôt).
  * -------------------------------------------------------------------------- */
 int main(int argc, char **argv)
 {
@@ -1622,9 +1760,11 @@ int main(int argc, char **argv)
     output_result();
 
     /* Effacement automatique : mode clipboard seul ou combiné ; le délai
-     * a été validé obligatoire à l'analyse (cfg.erase_clipboard posé). */
+     * a été validé obligatoire à l'analyse (cfg.erase_clipboard posé).
+     * L'appel rend la console : l'effacement est programmé en
+     * sous-routine détachée, qui survit à la fin du programme. */
     if (cfg.mode_clipboard && cfg.erase_clipboard)
-        erase_clipboard_after_delay();
+        schedule_erase_clipboard();
 
     return 0;
 }
