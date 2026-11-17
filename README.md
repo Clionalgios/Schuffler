@@ -32,8 +32,8 @@ Aucun mode n'est appliqué par défaut : l'option `-A` ou `-C` est obligatoire ;
 | Option | Mode | Effet |
 | :---: | :---: | :---: |
 | `-A`, `--API` | API | La chaîne transformée est écrite en clair sur la sortie standard. Le secret doit être passé en argument. |
-| `-C`, `--clipboard` | Clipboard | La chaîne transformée est copiée dans le presse-papiers ; seul un « 0 » est affiché sur la sortie standard. |
-| `-A -C` | Combiné | La chaîne est envoyée à la fois sur la sortie standard et dans le presse-papiers, sans le « 0 » du mode clipboard seul. |
+| `-C`, `--clipboard` | Clipboard | La chaîne transformée est copiée dans le presse-papiers ; seul un « 0 » est affiché sur la sortie standard. Notez que le mode clipboard nécessite l'option `-e` ou `--erase-after` pour l'effacement automatique. |
+| `-A -C` | Combiné | La chaîne est envoyée à la fois sur la sortie standard et dans le presse-papiers, sans le « 0 » du mode clipboard seul. Implique l'usage de l'option `-e` ou `--erase-after`. |
 
 ### Options
 
@@ -46,13 +46,13 @@ Aucun mode n'est appliqué par défaut : l'option `-A` ou `-C` est obligatoire ;
 | `--no-special` | Exclure les caractères spéciaux. |
 | `--special-set "<jeu>"` | Forcer le jeu de caractères spéciaux. Option répétable : les jeux successifs sont agglomérés, les doublons éliminés. |
 | `--exclude-chars "<liste>"` | Exclure explicitement certains caractères, après tous les jeux. Option répétable, même agrégation. |
-| -e, --erase-after N | Délai, en secondes, avant l'effacement automatique du presse-papiers après l'affichage du résultat. Obligatoire en mode clipboard (-C), refusée hors de ce mode. Minimum 1 ; lecture décimale stricte à l'identique de -l, la dernière valeur valide l'emporte. Le délai accordé est annoncé sur la sortie standard, puis la console est rendue : l'effacement est opéré à l'échéance par une sous-routine détachée, qui survit à la fin du programme. |
+| `-e, --erase-after N` | Délai, en secondes, avant l'effacement automatique du presse-papiers après l'affichage du résultat. Obligatoire en mode clipboard (-C), refusée hors de ce mode. Minimum 1 ; lecture décimale stricte à l'identique de -l, la dernière valeur valide l'emporte. Le délai accordé est annoncé sur la sortie standard, puis la console est rendue : l'effacement est opéré à l'échéance par une sous-routine détachée, qui survit à la fin du programme. |
 | `-a`, `--artefact` | Afficher l'artefact de la chaîne (premier et dernier caractère) : en complément du clair en mode API, à la place du « 0 » en mode clipboard seul. Le presse-papiers reçoit toujours la chaîne complète. |
 | `-h`, `--help` | Afficher l'aide et quitter. |
 
 ### Conventions de sortie
 
-- La sortie standard est réservée à la chaîne transformée (mode `-A`), au « 0 » du mode clipboard seul, à l'artefact et à l'aide demandée explicitement. Aucun message d'erreur n'y figure jamais.
+- La sortie standard est réservée à la chaîne transformée (mode `-A`), au « 0 » du mode clipboard seul, à l'artefact, au délai d'effacement annoncé à l'émission (option `-e`, mode clipboard) et à l'aide demandée explicitement. Aucun message d'erreur n'y figure jamais.
 - La sortie d'erreur porte tous les messages d'erreur, ainsi que l'aide affichée à la suite d'une erreur.
 - Code de retour : 0 en cas de succès, 1 en cas d'erreur.
 - Le secret ne peut pas commencer par un tiret ; seul le premier argument positionnel est retenu ; tout ce qui suit « -- » est ignoré.

@@ -136,7 +136,7 @@ Comportement attendu : `--special-set` force le jeu de caractères spéciaux ; i
 | `./Schuffler -A --special-set '@#%' test`                                                                              | *Bypassed*       | `nalTBVD2x4@#COO0ST5f`                                 | *Rien*                                  | 0      |
 | `./Schuffler -A --special-set '@#$%' --exclude-chars '#' test`                                                         | *Bypassed*       | `nalTBVD2x4@$COO0ST5f`                                 | *Rien*                                  | 0      |
 | `./Schuffler -A --special-set '@#%' -l 50 test`                                                                        | *Bypassed*       | `n5UpBYST5RWvdOO0rVnz@#CxcYw2x4qMjDBVDrM@FalT8KTmof`   | *Rien*                                  | 0      |
-| `./Schuffler -A --special-set '@#%' --no-special test` (jeu sans effet : classe désactivée)                            | *Bypassed*       | *À définir*                                            | *Rien*                                  | 0      |
+| `./Schuffler -A --special-set '@#%' --no-special test` (jeu sans effet : classe désactivée) | *Bypassed* | `taoTBVD2DduhIRR61Zeo` (identique à `--no-special`) | *Rien* | 0 |
 | `./Schuffler -A --special-set '@@@' test` (caractères répétés : doublons éliminés, équivalent à `--special-set '@'`)   | *Bypassed*       | `ranTBVD2B@@eGQQ4YXal`                                 | *Rien*                                  | 0      |
 | `./Schuffler -A --special-set '' test` (jeu spécial vide)                                                              | *Bypassed*       | *Vide*                                                 | `Jeu de caractères spéciaux manquant`   | 1      |
 
