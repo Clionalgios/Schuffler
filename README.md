@@ -19,6 +19,7 @@ La transformation est commune à tous les portages et se déroule comme suit :
 4. Injection forcée d'un caractère par classe active (positions 0 à 3), afin que chaque classe conservée figure au moins une fois.
 5. Permutation déterministe du résultat.
 6. Sortie selon le mode demandé (sortie standard, presse-papiers, ou les deux).
+7. Effacement automatique (mode clipboard) : le délai accordé — obligatoire, option -e/--erase-after — est annoncé sur la sortie standard ; le programme rend aussitôt la console, l'effacement est programmé en sous-routine détachée qui survit à sa fin.
 
 ## Interface commune
 
@@ -45,6 +46,7 @@ Aucun mode n'est appliqué par défaut : l'option `-A` ou `-C` est obligatoire ;
 | `--no-special` | Exclure les caractères spéciaux. |
 | `--special-set "<jeu>"` | Forcer le jeu de caractères spéciaux. Option répétable : les jeux successifs sont agglomérés, les doublons éliminés. |
 | `--exclude-chars "<liste>"` | Exclure explicitement certains caractères, après tous les jeux. Option répétable, même agrégation. |
+| -e, --erase-after N | Délai, en secondes, avant l'effacement automatique du presse-papiers après l'affichage du résultat. Obligatoire en mode clipboard (-C), refusée hors de ce mode. Minimum 1 ; lecture décimale stricte à l'identique de -l, la dernière valeur valide l'emporte. Le délai accordé est annoncé sur la sortie standard, puis la console est rendue : l'effacement est opéré à l'échéance par une sous-routine détachée, qui survit à la fin du programme. |
 | `-a`, `--artefact` | Afficher l'artefact de la chaîne (premier et dernier caractère) : en complément du clair en mode API, à la place du « 0 » en mode clipboard seul. Le presse-papiers reçoit toujours la chaîne complète. |
 | `-h`, `--help` | Afficher l'aide et quitter. |
 
